@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -29,6 +30,7 @@ def _add_src() -> None:
 _add_src()
 
 from ece_autocompiler import cli  # noqa: E402
+from ece_autocompiler.build import exe_exporter as EXE  # noqa: E402
 from ece_autocompiler.build.exe_exporter import (  # noqa: E402
     ExeReadiness,
     exe_readiness,
@@ -185,6 +187,60 @@ class AnalyzeReportTests(unittest.TestCase):
         self.assertFalse(top["exe_readiness"]["possible"])
         self.assertEqual(top["exe_readiness"]["missing"], ["PyInstaller"])
         self.assertTrue(top["exe_readiness"]["actions"])
+
+
+class FrozenBuildInterpreterTests(unittest.TestCase):
+    """A standalone .exe must never probe itself with ``sys.executable``.
+
+    In a frozen build that path is the app's own executable, so asking it for
+    ``-m PyInstaller`` would relaunch the app instead of answering. The rule:
+    use this interpreter from source, a real Python on PATH when frozen, and
+    say so honestly when there is none.
+    """
+
+    def test_from_source_uses_this_interpreter(self) -> None:
+        self.assertEqual(EXE.pyinstaller_interpreter(), sys.executable)
+
+    def test_frozen_prefers_a_real_python_on_path(self) -> None:
+        found = r"C:\Windows\py.exe"
+        with mock.patch.object(sys, "frozen", True, create=True), mock.patch(
+            "shutil.which", side_effect=lambda name: found if name == "py" else None
+        ):
+            self.assertEqual(EXE.pyinstaller_interpreter(), found)
+
+    def test_frozen_probe_runs_through_the_found_interpreter(self) -> None:
+        seen: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            seen.append(list(argv))
+            return SimpleNamespace(returncode=0, stdout="6.22.3\n", stderr="")
+
+        with mock.patch.object(sys, "frozen", True, create=True), mock.patch(
+            "shutil.which", return_value=r"C:\Windows\py.exe"
+        ), mock.patch("subprocess.run", side_effect=fake_run):
+            available, info = EXE.pyinstaller_available()
+
+        self.assertTrue(available)
+        self.assertEqual(info, "6.22.3")
+        self.assertEqual(seen[0][0], r"C:\Windows\py.exe")
+        self.assertNotIn(sys.executable, seen[0], "must not probe the frozen exe")
+
+    def test_frozen_without_python_says_that_plainly(self) -> None:
+        with mock.patch.object(sys, "frozen", True, create=True), mock.patch(
+            "shutil.which", return_value=None
+        ):
+            available, reason = EXE.pyinstaller_available()
+            self.assertFalse(available)
+            self.assertIn("standalone build", reason)
+
+            ready = EXE.exe_readiness("python")
+            self.assertFalse(ready.possible)
+            self.assertEqual(ready.missing, ["Python interpreter"])
+            self.assertTrue(any("Install Python" in a for a in ready.actions))
+            self.assertFalse(
+                any("pip install pyinstaller" in a for a in ready.actions),
+                "do not tell a machine without Python to pip install anything",
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

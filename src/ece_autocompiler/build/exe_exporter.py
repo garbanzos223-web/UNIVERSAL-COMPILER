@@ -82,13 +82,37 @@ class ExeExportResult:
         return lines
 
 
+def pyinstaller_interpreter() -> str | None:
+    """The Python interpreter that hosts PyInstaller, or None if there is none.
+
+    Normally that is the interpreter running this code. In a standalone build
+    ``sys.executable`` is the app's own .exe, which cannot host PyInstaller, so
+    a Python installed on this PC (PATH or the ``py`` launcher) is used
+    instead. If there is none, the honest answer is "cannot build here" - never
+    a bare "PyInstaller is not installed" about a machine that never got asked.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    for candidate in ("py", "python", "python3"):
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return None
+
+
 def pyinstaller_available() -> tuple[bool, str]:
     """Return (available, version-or-reason)."""
     import subprocess
 
+    interpreter = pyinstaller_interpreter()
+    if interpreter is None:
+        return False, (
+            "This is a standalone build and no Python interpreter was found on "
+            "PATH to host PyInstaller"
+        )
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "PyInstaller", "--version"],
+            [interpreter, "-m", "PyInstaller", "--version"],
             capture_output=True,
             text=True,
             timeout=60,
@@ -98,6 +122,20 @@ def pyinstaller_available() -> tuple[bool, str]:
     if proc.returncode != 0:
         return False, "PyInstaller is not installed (pip install pyinstaller)"
     return True, (proc.stdout or "").strip() or "unknown"
+
+
+def _pyinstaller_fix_actions() -> list[str]:
+    """Concrete next steps when PyInstaller cannot be used on this PC."""
+    if pyinstaller_interpreter() is None:
+        return [
+            "Install Python (https://www.python.org/downloads/windows/), then "
+            "run the export again.",
+            "Or package the project as .ece - that needs no interpreter.",
+        ]
+    return [
+        "Install PyInstaller:  python -m pip install pyinstaller",
+        "Then export the .exe again.",
+    ]
 
 
 def find_entry_point(project: Path) -> Path | None:
@@ -152,10 +190,7 @@ def export_exe(
     if not available:
         return ExeExportResult(
             ok=False, exe_path=None, message=info,
-            actions=[
-                "Install PyInstaller:  python -m pip install pyinstaller",
-                "Run the export again afterwards.",
-            ],
+            actions=_pyinstaller_fix_actions(),
         )
 
     entry_path = Path(entry).resolve() if entry else find_entry_point(project)
@@ -176,6 +211,24 @@ def export_exe(
     exe_name = name or project.name or "application"
     out_path = Path(output) if output else (cfg.output_dir / f"{exe_name}.exe")
 
+    # The interpreter that hosts PyInstaller: this one from source, or a real
+    # Python on PATH when this is a standalone build (see
+    # pyinstaller_interpreter). Without it there is nothing to run.
+    interpreter = pyinstaller_interpreter()
+    if interpreter is None:
+        return ExeExportResult(
+            ok=False, exe_path=None, language="python", adapter_id="python",
+            message=(
+                "This is a standalone build and no Python interpreter was found "
+                "on PATH to host PyInstaller."
+            ),
+            actions=[
+                "Install Python (https://www.python.org/downloads/windows/), "
+                "then run the export again.",
+                "Or package the project as .ece - that needs no interpreter.",
+            ],
+        )
+
     # Unique per build: same-second exports must not share a workdir, a
     # spec file or a log (the old ``exe_<epoch>`` naming did exactly that).
     sweep_work_dirs(cfg)
@@ -183,7 +236,7 @@ def export_exe(
     dist_dir = work / "dist"
 
     argv: list[str] = [
-        sys.executable,
+        interpreter,
         "-m",
         "PyInstaller",
         "--noconfirm",
@@ -357,13 +410,11 @@ def exe_readiness(adapter_id: str) -> ExeReadiness:
             return ExeReadiness(
                 adapter_id, True, f"ready - PyInstaller {info} detected."
             )
+        has_interpreter = pyinstaller_interpreter() is not None
         return ExeReadiness(
             adapter_id, False, f"cannot build .exe yet - {info}",
-            missing=["PyInstaller"],
-            actions=[
-                "Install PyInstaller:  python -m pip install pyinstaller",
-                "Then export the .exe again.",
-            ],
+            missing=["PyInstaller"] if has_interpreter else ["Python interpreter"],
+            actions=_pyinstaller_fix_actions(),
         )
 
     if adapter_id == "node":

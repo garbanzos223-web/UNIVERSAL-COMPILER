@@ -70,18 +70,33 @@ executable once, then just open it, select a project folder and press
 **Compile**:
 
 ```powershell
-# One-time: build the executable (needs pyinstaller)
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1              # single file
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Mode onedir # folder
-# -> dist\ECE-AutoCompiler.exe   or   dist\ECE-AutoCompiler\ECE-AutoCompiler.exe
+# One-time: build the executables (needs pyinstaller)
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1                  # both builds, single file
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Layout onedir  # folder (faster start)
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Target cli     # console build only
+# -> dist\ECE-AutoCompiler.exe        desktop window (no console)
+# -> dist\ECE-AutoCompiler-cli.exe    the same CLI, from a terminal
 ```
 
 Double-click `dist\ECE-AutoCompiler.exe` to launch the desktop window. The
 `.exe` bundles the Python interpreter and the app; nothing else to install.
 
-> The build is reproducible via `scripts\build_exe.ps1` (PyInstaller, onefile,
-> windowed). The generated `.exe` is a build artifact and is **not** committed to
-> the repository (see `.gitignore`).
+The console build is the product's command line, frozen: 
+
+```powershell
+dist\ECE-AutoCompiler-cli.exe --version
+dist\ECE-AutoCompiler-cli.exe analyze C:\ruta\al\proyecto
+dist\ECE-AutoCompiler-cli.exe exe C:\ruta\al\proyecto -o salida\app.exe
+```
+
+Every build is verified before it is called a release: `tools\release_check.py`
+runs the console build (`--version`) and starts the desktop build to confirm it
+stays alive, then reports size and SHA256 for each artifact in
+`dist\release.json`. A build that cannot run fails the script.
+
+> The build is reproducible via `scripts\build_exe.ps1` (PyInstaller). The
+> generated `.exe` files are build artifacts and are **not** committed to the
+> repository (see `.gitignore`).
 
 ## Desktop window
 
@@ -147,7 +162,7 @@ instead of pretending to build. Options: `--entry`, `--onedir`, `--console`,
 
 ### `.exe` layout: `onefile` vs `onedir`
 
-The Python exporter and the app builder (`scripts\build_exe.ps1 -Mode ...`)
+The Python exporter and the app builder (`scripts\build_exe.ps1 -Layout ...`)
 offer both layouts; the GUI exposes them as *Single file* / *Folder*:
 
 | | onefile (single file) | onedir (folder) |
