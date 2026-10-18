@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import shutil
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +29,7 @@ from ..detection import scan
 from ..detection.toolchains import get_tool
 from ..logging_config import get_logger
 from .process import run_command, RunResult
+from .workdirs import new_work_dir, sweep_work_dirs
 
 log = get_logger("build.exe")
 
@@ -138,9 +138,11 @@ def export_exe(
     exe_name = name or project.name or "application"
     out_path = Path(output) if output else (cfg.output_dir / f"{exe_name}.exe")
 
-    work = cfg.work_dir / f"exe_{int(time.time())}"
+    # Unique per build: same-second exports must not share a workdir, a
+    # spec file or a log (the old ``exe_<epoch>`` naming did exactly that).
+    sweep_work_dirs(cfg)
+    work = new_work_dir(cfg)
     dist_dir = work / "dist"
-    work.mkdir(parents=True, exist_ok=True)
 
     argv: list[str] = [
         sys.executable,
@@ -172,7 +174,7 @@ def export_exe(
         timeout=timeout,
         requires_approval=False,
     )
-    log_path = cfg.work_dir / "logs" / f"exe_{int(time.time())}.log"
+    log_path = cfg.work_dir / "logs" / f"{work.name}.log"
     run = run_command(
         steps=[step],
         workdir=project,
@@ -227,7 +229,9 @@ def export_exe(
         )
 
     errors = list(run.errors) or ["PyInstaller failed to produce an executable."]
-    shutil.rmtree(work, ignore_errors=True)
+    # The workdir is deliberately kept: after a failure it is the only
+    # evidence of what happened. sweep_work_dirs bounds how many of these
+    # diagnosis workdirs accumulate across builds.
     return ExeExportResult(
         ok=False,
         exe_path=None,
@@ -237,6 +241,7 @@ def export_exe(
         duration_seconds=run.duration_seconds,
         log_path=log_path,
         errors=errors,
+        notes=[f"Build files kept for diagnosis: {work}"],
     )
 
 
@@ -301,8 +306,9 @@ def _first_exe(directory: Path, prefer: str | None = None) -> Path | None:
     return max(exes, key=lambda p: p.stat().st_size)
 
 
-def _run_steps(steps, workdir, *, timeout, progress, cancel, config) -> RunResult:
-    log_path = config.work_dir / "logs" / f"exe_{int(time.time())}.log"
+def _run_steps(steps, workdir, *, timeout, progress, cancel, config,
+               log_name: str) -> RunResult:
+    log_path = config.work_dir / "logs" / f"{log_name}.log"
     return run_command(
         steps=steps, workdir=workdir, progress=progress, cancel=cancel,
         log_path=log_path, config=config,
@@ -410,10 +416,9 @@ def _compile_native(
     *, onefile=True, timeout, progress, cancel, config,
 ) -> ExeExportResult:
     """Build a native executable for a compiled language and locate the result."""
-    import time as _time
-
-    work = config.work_dir / f"exe_{int(_time.time())}"
-    work.mkdir(parents=True, exist_ok=True)
+    # Unique per build; see the note in export_exe about same-second runs.
+    sweep_work_dirs(config)
+    work = new_work_dir(config)
     steps: list[BuildPlanStep] = []
 
     def _add(sid, title, argv, wd=None):
@@ -463,7 +468,7 @@ def _compile_native(
     if progress:
         progress(f"Compiling {label} into an executable", 0, 100)
     run = _run_steps(steps, project, timeout=timeout, progress=progress,
-                     cancel=cancel, config=config)
+                     cancel=cancel, config=config, log_name=work.name)
 
     produced = None
     if adapter_id == "go" and out_path.is_file():
@@ -489,10 +494,11 @@ def _compile_native(
             notes=notes,
         )
 
-    shutil.rmtree(work, ignore_errors=True)
+    # Kept for diagnosis, same as the Python path above.
     return ExeExportResult(
         ok=False, exe_path=None, message=f"{label} .exe build failed.",
         exit_code=run.exit_code, duration_seconds=run.duration_seconds,
         language=label, adapter_id=adapter_id,
         errors=list(run.errors) or [f"The {label} toolchain did not produce an executable."],
+        notes=[f"Build files kept for diagnosis: {work}"],
     )
