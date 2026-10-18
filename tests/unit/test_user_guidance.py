@@ -134,6 +134,8 @@ class DetectionFailureGuidanceTests(_FailureContractMixin, unittest.TestCase):
         # Why = facts; what to do = install steps.
         self.assertEqual(result.errors, ["cargo was not found on this PC."])
         self.assertTrue(result.actions[0].startswith("Install"))
+        # The hint is keyed by adapter, so it names Rust and where to get it.
+        self.assertTrue(any("rustup.rs" in a for a in result.actions))
         self.assertIn("Run the export again after installing.", result.actions)
         self.assertTrue(any("honestly" in n for n in result.notes))
 

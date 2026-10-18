@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from ..build import BuildOrchestrator
 from ..build import history as build_history
+from ..build.exe_exporter import ExeReadiness, exe_readiness
 from ..config import AppConfig
 from ..container import validate_container
 from ..container.reader import ContainerReader
@@ -350,9 +351,16 @@ class MainWindow(ttk.Frame):
         self.log.append(f"Scanning {path} ...", "accent")
 
         def work():
-            return scan(Path(path))
+            result = scan(Path(path))
+            # Probing PyInstaller/toolchains spawns processes: run it here on
+            # the worker thread so the window never freezes during Detect.
+            readiness: dict[str, ExeReadiness] = {}
+            for cand in result.candidates:
+                readiness.setdefault(cand.adapter_id, exe_readiness(cand.adapter_id))
+            return result, readiness
 
-        def done(result):
+        def done(payload):
+            result, readiness = payload
             still_scanning = self._state is UiState.DETECTING
             self._candidates = result.candidates
             self._adapter_by_label = {}
@@ -372,12 +380,15 @@ class MainWindow(ttk.Frame):
                         self.log.append(f"Package manager: {best.package_manager}", "info")
                     if best.evidence:
                         self.log.append(f"Evidence: {', '.join(best.evidence[:6])}", "muted")
-                    if best.adapter_id in ("unity", "unreal"):
+                    ready = readiness.get(best.adapter_id)
+                    if ready is not None:
+                        # Honest answer to "can this become an .exe here?".
                         self.log.append(
-                            "Note: game-engine projects need their own editor/SDK to build; "
-                            "this tool detects them but cannot produce an .exe by itself.",
-                            "warn",
+                            f"Export to .exe: {ready.summary}",
+                            "ok" if ready.possible else "warn",
                         )
+                        for action in ready.actions:
+                            self.log.append(f"  - {action}", "muted")
             else:
                 self.detected_var.set("no supported project found")
                 self.log.append(result.summary(), "warn")

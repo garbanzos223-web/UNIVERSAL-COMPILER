@@ -324,6 +324,89 @@ def _missing_tools(tool_ids: tuple[str, ...]) -> list[str]:
     return missing
 
 
+@dataclass
+class ExeReadiness:
+    """Whether a detected project can be compiled to a Windows .exe on THIS PC.
+
+    Detection only: nothing is built and nothing is downloaded. ``missing``
+    are facts (tools not found); ``actions`` are the install steps. The answer
+    is deliberately allowed to be "no" - claiming a build that cannot happen
+    is the one thing this tool never does.
+    """
+
+    adapter_id: str
+    possible: bool
+    summary: str
+    missing: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "possible": self.possible,
+            "summary": self.summary,
+            "missing": list(self.missing),
+            "actions": list(self.actions),
+        }
+
+
+def exe_readiness(adapter_id: str) -> ExeReadiness:
+    """Report .exe export readiness for one detected adapter."""
+    if adapter_id == "python":
+        available, info = pyinstaller_available()
+        if available:
+            return ExeReadiness(
+                adapter_id, True, f"ready - PyInstaller {info} detected."
+            )
+        return ExeReadiness(
+            adapter_id, False, f"cannot build .exe yet - {info}",
+            missing=["PyInstaller"],
+            actions=[
+                "Install PyInstaller:  python -m pip install pyinstaller",
+                "Then export the .exe again.",
+            ],
+        )
+
+    if adapter_id == "node":
+        return ExeReadiness(
+            adapter_id, False,
+            "cannot build .exe here - it needs a bundler (pkg or nexe).",
+            missing=["pkg or nexe"],
+            actions=[
+                "Install a bundler:  npm install -g pkg",
+                "Or package the project as .ece - that needs no bundler.",
+            ],
+        )
+
+    if adapter_id in ("unity", "unreal"):
+        return ExeReadiness(
+            adapter_id, False,
+            "cannot build .exe here - engine projects are built by their own editor.",
+            missing=[adapter_id],
+            actions=[
+                "Open the project in its editor and use its Windows x64 build menu.",
+                "This tool detects the project and reports what is missing.",
+            ],
+        )
+
+    tools = _NATIVE_TOOLS.get(adapter_id)
+    if tools is not None:
+        missing = _missing_tools(tools)
+        hint = _INSTALL_HINTS.get(adapter_id, f"Install {', '.join(missing)}.")
+        if not missing:
+            return ExeReadiness(adapter_id, True, "ready - required toolchain found.")
+        return ExeReadiness(
+            adapter_id, False,
+            f"cannot build .exe - missing {', '.join(missing)}.",
+            missing=missing,
+            actions=[hint],
+        )
+
+    return ExeReadiness(
+        adapter_id, False,
+        "no .exe export path for this project type yet - package it as .ece instead.",
+    )
+
+
 def _find_cpp_compiler() -> str | None:
     """Return a C/C++ compiler executable name, or None if none is installed."""
     for cand in ("cl", "g++", "clang++", "gcc", "clang", "cc"):
@@ -468,12 +551,14 @@ def compile_exe(
         if cpp_compiler is None:
             missing.append("c++ compiler")
     if missing:
-        hints = [_INSTALL_HINTS.get(m, f"Install '{m}'.") for m in missing]
+        # Hints are keyed by adapter (the tool name alone - "cargo" - would
+        # miss the useful "Install Rust (https://rustup.rs)." line).
+        hint = _INSTALL_HINTS.get(adapter_id, f"Install {', '.join(missing)}.")
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
             message=f"Cannot build a {label} .exe: missing {', '.join(missing)}.",
             errors=[f"{m} was not found on this PC." for m in missing],
-            actions=hints + ["Run the export again after installing."],
+            actions=[hint, "Run the export again after installing."],
             notes=["Toolchain detected honestly; nothing was built."],
         )
 

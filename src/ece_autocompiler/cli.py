@@ -110,6 +110,12 @@ def cmd_analyze(args) -> int:
         return EXIT_ERROR
     result = scan(root)
     if args.json:
+        from .build.exe_exporter import ExeReadiness, exe_readiness
+
+        readiness: dict[str, ExeReadiness] = {}
+        for c in result.candidates:
+            if c.adapter_id not in readiness:
+                readiness[c.adapter_id] = exe_readiness(c.adapter_id)
         payload = {
             "root": str(root),
             "total_files": result.total_files,
@@ -125,6 +131,7 @@ def cmd_analyze(args) -> int:
                     "confidence": round(c.confidence, 3),
                     "evidence": c.evidence,
                     "notes": c.notes,
+                    "exe_readiness": readiness[c.adapter_id].as_dict(),
                 }
                 for c in result.candidates
             ],
@@ -146,6 +153,19 @@ def cmd_analyze(args) -> int:
         _print("Note: more than one project was detected; the GUI lets you choose.")
     for note in result.notes:
         _print(f"Note: {note}")
+
+    # Honest export diagnosis: can this project produce a Windows .exe here,
+    # and if not, exactly what is missing. Purely informational - nothing runs.
+    from .build.exe_exporter import exe_readiness
+
+    _print("Export readiness (.exe):")
+    for c in result.candidates:
+        label = ADAPTER_LABELS.get(c.adapter_id, c.adapter_id)
+        ready = exe_readiness(c.adapter_id)
+        _print(f"  - {label}: {ready.summary}")
+        for action in ready.actions:
+            _print(f"      {action}")
+    _print("Packaging as .ece always works:  ece build <folder>")
     return EXIT_OK
 
 
