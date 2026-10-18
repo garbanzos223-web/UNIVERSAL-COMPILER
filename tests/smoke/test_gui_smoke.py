@@ -397,6 +397,39 @@ class GuiSmokeTests(unittest.TestCase):
             "dark-titlebar helper must keep only what DWM really painted",
         )
 
+    def test_11_failed_export_shows_what_and_next_step(self) -> None:
+        # Bloque 3: a failed export must leave the three-part contract in
+        # the live log (what happened / why / what to do) and land in ERROR.
+        # The history write is patched so this smoke never touches the real
+        # history.jsonl.
+        from unittest import mock
+
+        from ece_autocompiler.build.exe_exporter import ExeExportResult
+        from ece_autocompiler.ui import main_window as mw
+
+        win = self.win
+        log = win.log
+        log.clear()
+        failing = ExeExportResult(
+            ok=False, exe_path=None, message="boom",
+            errors=["why-one"], actions=["step one", "step two"], exit_code=1,
+        )
+        try:
+            with mock.patch.object(mw.build_history, "append"):
+                win._exe_done(failing)
+            text = log.get()
+            self.assertIn("Executable export failed: boom", text)
+            self.assertIn("Why:", text)
+            self.assertIn("  - why-one", text)
+            self.assertIn("What to do:", text)
+            self.assertIn("  - step one", text)
+            self.assertEqual(win._state, UiState.ERROR)
+        finally:
+            log.set_filter("all")
+            log.clear()
+            win._set_state(UiState.IDLE)
+            self.ctx.status.reset()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

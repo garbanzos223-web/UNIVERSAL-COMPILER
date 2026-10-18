@@ -54,9 +54,32 @@ class ExeExportResult:
     log_path: Path | None = None
     errors: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # "What to do next": concrete steps the user can act on. Every failure
+    # path fills this in (see failure_lines), never blames the user, and
+    # never leaves them at a dead end.
+    actions: list[str] = field(default_factory=list)
     # Language / adapter that produced (or would produce) the executable.
     language: str | None = None
     adapter_id: str | None = None
+
+    def failure_lines(self) -> list[str]:
+        """Render the failure as what happened / why / what to do.
+
+        Three labelled parts, always, in this order. The CLI prints these
+        lines verbatim; the GUI renders the same fields as its own widgets.
+        """
+        lines = [f"What happened: {self.message or 'the export failed'}"]
+        if self.errors:
+            lines.append("Why:")
+            lines.extend(f"  - {e}" for e in self.errors[:8])
+        lines.append("What to do:")
+        actions = self.actions or [
+            "Open the build log for the exact error, fix it and try again."
+        ]
+        lines.extend(f"  - {a}" for a in actions[:6])
+        if self.log_path:
+            lines.append(f"Log: {self.log_path}")
+        return lines
 
 
 def pyinstaller_available() -> tuple[bool, str]:
@@ -118,12 +141,22 @@ def export_exe(
     project = Path(project).resolve()
     if not project.exists():
         return ExeExportResult(
-            ok=False, exe_path=None, message=f"Project path does not exist: {project}"
+            ok=False, exe_path=None, message=f"Project path does not exist: {project}",
+            actions=[
+                "Check that the folder still exists, then export again.",
+                "If it was moved or renamed, select the project folder again.",
+            ],
         )
 
     available, info = pyinstaller_available()
     if not available:
-        return ExeExportResult(ok=False, exe_path=None, message=info)
+        return ExeExportResult(
+            ok=False, exe_path=None, message=info,
+            actions=[
+                "Install PyInstaller:  python -m pip install pyinstaller",
+                "Run the export again afterwards.",
+            ],
+        )
 
     entry_path = Path(entry).resolve() if entry else find_entry_point(project)
     if entry_path is None or not entry_path.is_file():
@@ -133,6 +166,11 @@ def export_exe(
             message="Could not find a Python entry point (main.py, app.py, ...). "
             "Pass one explicitly.",
             entry=None,
+            actions=[
+                "Put the program's entry file in the project folder "
+                "(main.py, app.py, run.py, ...).",
+                "Or point to it directly: --entry <file.py> on the CLI.",
+            ],
         )
 
     exe_name = name or project.name or "application"
@@ -242,6 +280,12 @@ def export_exe(
         log_path=log_path,
         errors=errors,
         notes=[f"Build files kept for diagnosis: {work}"],
+        actions=[
+            "Open the build log above; its last error lines name the exact problem.",
+            "Fix that issue in the project and export again.",
+            "If an antivirus is installed, allow the "
+            "%LOCALAPPDATA%\\ECE-Universal-AutoCompiler folder, then retry.",
+        ],
     )
 
 
@@ -334,19 +378,35 @@ def compile_exe(
     project = Path(project).resolve()
     if not project.exists():
         return ExeExportResult(
-            ok=False, exe_path=None, message=f"Project path does not exist: {project}"
+            ok=False, exe_path=None, message=f"Project path does not exist: {project}",
+            actions=[
+                "Check that the folder still exists, then export again.",
+                "If it was moved or renamed, select the project folder again.",
+            ],
         )
 
     # 1. Detect the language.
     try:
         result = scan(project)
     except Exception as exc:  # noqa: BLE001 - surface as an honest failure
-        return ExeExportResult(ok=False, exe_path=None, message=f"Detection failed: {exc}")
+        return ExeExportResult(
+            ok=False, exe_path=None, message=f"Detection failed: {exc}",
+            actions=[
+                "Check that the folder contains a recognized project "
+                "(Python, Node.js, C#, Rust, Go, C/C++).",
+                "'analyze <folder>' on the CLI lists everything it can see.",
+            ],
+        )
     best = result.best
     if best is None:
         return ExeExportResult(
             ok=False, exe_path=None,
             message="No supported project was detected in this directory.",
+            actions=[
+                "Select the folder that directly contains the project files "
+                "(package.json, Cargo.toml, .csproj, main.py, CMakeLists.txt...).",
+                "'analyze <folder>' shows what was found where.",
+            ],
         )
 
     adapter_id = best.adapter_id
@@ -367,8 +427,12 @@ def compile_exe(
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
             message="Node.js .exe export needs a bundler that is not installed "
-                    "(pkg or nexe). Install one with: npm install -g pkg. "
-                    "The .ece build still works.",
+                    "(pkg or nexe).",
+            actions=[
+                "Install a bundler:  npm install -g pkg",
+                "Then run the export again.",
+                "Or use 'build' to package the project as .ece - no bundler needed.",
+            ],
             notes=["Detected Node.js. Use 'build' to package it as .ece."],
         )
 
@@ -376,6 +440,12 @@ def compile_exe(
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
             message=f"{label} projects are built inside their engine/editor, not here.",
+            actions=[
+                f"Open the project in the {label} editor and use its own "
+                "build/export menu for Windows x64.",
+                "This tool detects the project and reports the missing engine; "
+                "it cannot produce the .exe itself.",
+            ],
             notes=["This tool detects the project and reports the missing engine; it "
                    "cannot produce an .exe by itself."],
         )
@@ -384,6 +454,9 @@ def compile_exe(
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
             message=f"No .exe build strategy for '{label}' yet.",
+            actions=[
+                "'build' still packages this project as a .ece container.",
+            ],
         )
 
     # 3. Check the required tools before running anything.
@@ -399,7 +472,8 @@ def compile_exe(
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
             message=f"Cannot build a {label} .exe: missing {', '.join(missing)}.",
-            errors=hints,
+            errors=[f"{m} was not found on this PC." for m in missing],
+            actions=hints + ["Run the export again after installing."],
             notes=["Toolchain detected honestly; nothing was built."],
         )
 
@@ -501,4 +575,10 @@ def _compile_native(
         language=label, adapter_id=adapter_id,
         errors=list(run.errors) or [f"The {label} toolchain did not produce an executable."],
         notes=[f"Build files kept for diagnosis: {work}"],
+        actions=[
+            "Open the build log; its last error lines name the exact problem.",
+            "Fix that issue in the project and export again.",
+            "If an antivirus is installed, allow the "
+            "%LOCALAPPDATA%\\ECE-Universal-AutoCompiler folder, then retry.",
+        ],
     )

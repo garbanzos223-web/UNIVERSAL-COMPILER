@@ -377,11 +377,9 @@ def cmd_exe(args) -> int:
     )
 
     if not result.ok:
-        _print(f"Executable export failed: {result.message}")
-        for err in result.errors[:8]:
-            _print(f"  {err}")
-        if result.log_path:
-            _print(f"Log: {result.log_path}")
+        # Same three-part shape as the GUI: what happened / why / what to do.
+        for line in result.failure_lines():
+            _print(line)
         return EXIT_ERROR
 
     _print(f"Executable created in {result.duration_seconds:.1f}s.")

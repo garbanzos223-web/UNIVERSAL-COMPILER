@@ -473,9 +473,16 @@ class MainWindow(ttk.Frame):
     def _exe_done(self, result) -> None:
         if not result.ok:
             self._finish_build(UiState.ERROR)
+            # Same three-part shape as the CLI: what happened / why / what to
+            # do. The user always leaves with a next step, never a dead end.
             self.log.append(f"Executable export failed: {result.message}", "err")
-            for err in result.errors[:8]:
-                self.log.append(f"  {err}", "err")
+            if result.errors:
+                self.log.append("Why:", "err")
+                for err in result.errors[:8]:
+                    self.log.append(f"  - {err}", "err")
+            self.log.append("What to do:", "warn")
+            for act in result.actions[:6]:
+                self.log.append(f"  - {act}", "warn")
             if result.log_path:
                 self.log.append(f"Log: {result.log_path}", "muted")
             self.ctx.status.set("Executable export failed.")
