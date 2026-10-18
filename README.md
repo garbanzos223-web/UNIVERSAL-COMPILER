@@ -42,19 +42,22 @@ on your PC, and package the result into a secure, versioned `.ece` container.**
 [The `.exe`](#standalone-windows-app-exe) below, then open it, pick a folder and
 press **Compile**.
 
-**Option B — run from source.** Nothing to install:
+**Option B — run from source.** Install it once in editable mode, so the
+command works from **any folder** (recommended):
 
 ```powershell
-# From the repository root
-$env:PYTHONPATH = "$PWD\src"
+python -m pip install -e .
 python -m ece_autocompiler --version
 python -m ece_autocompiler gui        # open the desktop window
 ```
 
-Optional editable install so the `ece-autocompiler` command is on your `PATH`:
+Or run it without installing, **only from the repository root** (`PYTHONPATH`
+set anywhere else fails with `No module named ece_autocompiler`):
 
 ```powershell
-python -m pip install -e .
+# From the repository root
+$env:PYTHONPATH = "$PWD\src"
+python -m ece_autocompiler gui
 ```
 
 ## Standalone Windows app (`.exe`)
@@ -85,8 +88,8 @@ python -m ece_autocompiler gui
 A single, simple window:
 
 1. **Project folder** — pick the folder (type auto-detected, shown as *Detected*).
-2. **Output** — choose **Package as `.ece`** or **Build `.exe`** (Python); the
-   output path and options adapt to the mode.
+2. **Output** — choose **Package as `.ece`** or **Build `.exe`** (detects the
+   language); the output path and options adapt to the mode.
 3. **Compile** — runs the build / export and shows progress in the log.
 
 Options per mode — `.ece`: compression, skip install. `.exe`: console window,

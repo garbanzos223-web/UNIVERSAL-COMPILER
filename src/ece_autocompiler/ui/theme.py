@@ -88,6 +88,23 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
     style.configure("TCheckbutton", background=COLORS["bg"], foreground=COLORS["fg"])
     style.map("TCheckbutton", background=[("active", COLORS["bg"])], foreground=[("disabled", COLORS["muted"])])
 
+    style.configure("TRadiobutton", background=COLORS["bg"], foreground=COLORS["fg"])
+    style.map(
+        "TRadiobutton",
+        background=[("active", COLORS["bg"])],
+        foreground=[("disabled", COLORS["muted"]), ("selected", COLORS["accent"])],
+    )
+
+    # Grouped "card" surface used to visually contain a section of controls.
+    style.configure("Card.TFrame", background=COLORS["panel"], borderwidth=1, relief="flat")
+    style.configure("Card.TLabel", background=COLORS["panel"], foreground=COLORS["fg"])
+    style.configure("Card.Muted.TLabel", background=COLORS["panel"], foreground=COLORS["muted"])
+    # Accent-coloured section header.
+    style.configure("Section.TLabel", background=COLORS["bg"], foreground=COLORS["accent"], font=FONTS["bold"])
+    style.configure("Section.Card.TLabel", background=COLORS["panel"], foreground=COLORS["accent"], font=FONTS["bold"])
+    # Slightly brighter field background when focused.
+    style.map("TEntry", fieldbackground=[("focus", COLORS["panel_alt"])])
+
     style.configure("TNotebook", background=COLORS["bg"], borderwidth=0, tabmargins=(6, 6, 6, 0))
     style.configure("TNotebook.Tab", background=COLORS["panel"], foreground=COLORS["muted"], padding=(16, 8), borderwidth=0)
     style.map(

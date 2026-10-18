@@ -24,9 +24,11 @@ from ..build import BuildOrchestrator
 from ..build import history as build_history
 from ..config import AppConfig
 from ..container import validate_container
+from ..container.reader import ContainerReader
 from ..detection import discover_all, scan
 from ..detection.detector import ADAPTER_LABELS
 from ..diagnostics import classify, first_actionable, summarize
+from ..extraction import Extractor
 from ..logging_config import get_logger
 from ..security import sanitize_filename
 from ..version import APP_NAME, APP_VERSION, CONTAINER_FORMAT_VERSION
@@ -171,6 +173,7 @@ class MainWindow(ttk.Frame):
         menubar.add_cascade(label="File", menu=filem)
 
         toolsm = tk.Menu(menubar, tearoff=0)
+        toolsm.add_command(label="Inspect / Extract .ece...", command=self._show_container)
         toolsm.add_command(label="Toolchains...", command=self._show_toolchains)
         toolsm.add_command(label="Build history...", command=self._show_history)
         menubar.add_cascade(label="Tools", menu=toolsm)
@@ -458,6 +461,9 @@ class MainWindow(ttk.Frame):
     def _show_history(self) -> None:
         HistoryDialog(self.ctx)
 
+    def _show_container(self) -> None:
+        ContainerDialog(self.ctx)
+
     def _show_about(self) -> None:
         AboutDialog(self.ctx)
 
@@ -523,6 +529,163 @@ class HistoryDialog(_Dialog):
             ), tags=(tag,))
 
 
+class ContainerDialog(_Dialog):
+    """Inspect an `.ece` container (deep validation) and extract its contents."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(ctx, "Inspect / Extract .ece", width=800, height=520)
+        self.container: Path | None = None
+
+        bar = ttk.Frame(self, padding=(12, 10, 12, 0))
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Open .ece...", command=self._open).pack(side="left")
+        self.file_var = tk.StringVar(value="No file selected")
+        ttk.Label(bar, textvariable=self.file_var, style="Card.Muted.TLabel").pack(
+            side="left", padx=10
+        )
+
+        self.summary_var = tk.StringVar(
+            value="Choose an .ece container to inspect, verify its hashes and extract it."
+        )
+        ttk.Label(
+            self, textvariable=self.summary_var, padding=(12, 8),
+            wraplength=760, justify="left",
+        ).pack(fill="x")
+
+        body = ttk.Frame(self, padding=(12, 0, 12, 0))
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        tree = make_tree(
+            body,
+            [("path", "Path inside container", 320), ("size", "Size", 90),
+             ("comp", "Compression", 100), ("stored", "Stored", 90),
+             ("exe", "Executable", 80)],
+        )
+        tree.grid(row=0, column=0, sticky="nsew")
+        with_scrollbar(body, tree).grid(row=0, column=1, sticky="ns")
+        tree.tag_configure("exec", foreground=COLORS["accent"])
+        tree.tag_configure("bad", foreground=COLORS["err"])
+        self.tree = tree
+
+        row = ttk.Frame(self, padding=(12, 8, 12, 12))
+        row.pack(fill="x")
+        self.extract_btn = ttk.Button(
+            row, text="Extract...", command=self._extract, state="disabled"
+        )
+        self.extract_btn.pack(side="left")
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(row, textvariable=self.status_var, style="Card.Muted.TLabel").pack(
+            side="left", padx=10
+        )
+
+    # ------------------------------------------------------------- actions
+    def _open(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Open an .ece container",
+            filetypes=[("ECE containers", "*.ece"), ("All files", "*.*")],
+        )
+        if path:
+            self._load(Path(path))
+
+    def _load(self, path: Path) -> None:
+        self.container = path
+        self.file_var.set(str(path))
+        self.tree.delete(*self.tree.get_children())
+        self.extract_btn.configure(state="disabled")
+        self.summary_var.set("Validating (deep: re-hashing every entry)...")
+        self.status_var.set("Validating...")
+        self.ctx.status.set("Validating container...")
+
+        def work():
+            report = validate_container(path, deep=True)
+            rows = []
+            with ContainerReader(path) as reader:
+                for entry in reader.entries():
+                    rows.append(
+                        (
+                            entry.path,
+                            _fmt_size(entry.size),
+                            entry.compression,
+                            _fmt_size(entry.length),
+                            "yes" if entry.executable else "",
+                        )
+                    )
+            return report, rows
+
+        def done(result) -> None:
+            report, rows = result
+            for row in rows:
+                tags = ("exec",) if row[4] == "yes" else ()
+                self.tree.insert("", "end", values=row, tags=tags)
+            if report.ok:
+                verified = (
+                    f"  ·  all {report.hash_algo} hashes verified"
+                    if report.hashes_verified
+                    else ""
+                )
+                self.summary_var.set(
+                    f"Valid .ece  ·  format v{report.format_version}"
+                    f"  ·  {report.entry_count} entries  ·  {report.compression}"
+                    f"  ·  {_fmt_size(report.file_size)}{verified}"
+                )
+                self.extract_btn.configure(state="normal")
+                self.status_var.set("")
+                self.ctx.status.set("Container is valid")
+            else:
+                msgs = "; ".join(i.message for i in report.errors[:3]) or "invalid"
+                self.summary_var.set(f"INVALID .ece  ·  {msgs}")
+                self.status_var.set("")
+                self.ctx.status.set("Container validation failed")
+
+        def fail(exc: BaseException) -> None:
+            self.summary_var.set(f"Validation failed: {exc}")
+            self.status_var.set("")
+            self.ctx.status.set(f"Validation failed: {exc}")
+
+        self.ctx.runner.run(work, done, fail)
+
+    def _extract(self) -> None:
+        if self.container is None:
+            return
+        destination = filedialog.askdirectory(parent=self, title="Choose extraction folder")
+        if not destination:
+            return
+        container = self.container
+        self.extract_btn.configure(state="disabled")
+        self.status_var.set("Extracting...")
+
+        def progress(message: str, done_count: int, total: int) -> None:
+            # Worker thread: marshal to the Tk main loop before touching widgets.
+            self.ctx.runner.post(lambda: self.ctx.status.set(message))
+
+        def work():
+            return Extractor().extract(container, destination, progress=progress)
+
+        def done(report) -> None:
+            extra = f"  ·  {len(report.skipped)} skipped" if report.skipped else ""
+            self.status_var.set(f"Extracted: {report.summary}{extra}")
+            self.extract_btn.configure(state="normal")
+            self.ctx.status.set(f"Extracted {report.files_written} file(s)")
+            if report.warnings:
+                messagebox.showwarning(
+                    APP_NAME, "\n".join(report.warnings[:10]), parent=self
+                )
+            if report.files_written and messagebox.askyesno(
+                APP_NAME, f"{report.summary}\n\nOpen the folder?", parent=self
+            ):
+                _open_folder(Path(destination))
+
+        def fail(exc: BaseException) -> None:
+            self.status_var.set("Extraction failed")
+            self.extract_btn.configure(state="normal")
+            self.ctx.status.set(f"Extraction failed: {exc}")
+            messagebox.showerror(APP_NAME, f"Extraction failed:\n{exc}", parent=self)
+
+        self.ctx.runner.run(work, done, fail)
+
+
 class AboutDialog(_Dialog):
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(ctx, "About", width=560, height=320)
@@ -549,6 +712,16 @@ class AboutDialog(_Dialog):
         from ..version import APP_SLUG
 
         webbrowser.open(f"https://github.com/{APP_SLUG}")
+
+
+def _fmt_size(num: int) -> str:
+    """Human-readable byte size (KiB/MiB/GiB)."""
+    value = float(num)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{num} B"  # pragma: no cover - unreachable
 
 
 def _open_folder(path: Path) -> None:
