@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ece-universal-autocompiler"
+version = "0.1.0"
+description = "Detect, build and package software projects into versioned .ece containers."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "ECE Universal AutoCompiler contributors" }]
+keywords = ["build", "packaging", "compiler", "cli", "gui", "ece"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+]
+# No runtime third-party dependencies: the standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+# Development extras are intentionally empty; tests use unittest from the stdlib.
+dev = []
+
+[project.scripts]
+ece-autocompiler = "ece_autocompiler.app:run"
+
+[project.gui-scripts]
+ece-autocompiler-gui = "ece_autocompiler.ui:run_app"
+
+[project.urls]
+Homepage = "https://github.com/ece-universal-autocompiler"
+Source = "https://github.com/ece-universal-autocompiler"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+packages = ["ece_autocompiler"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
