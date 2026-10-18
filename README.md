@@ -11,6 +11,10 @@ versioned `.ece` container — or exports the project to a standalone Windows
 
 [Features](#features) · [Quick start](#quick-start) · [The `.exe`](#standalone-windows-app-exe) · [CLI](#command-line) · [Docs](#documentation) · [Honest by design](#honest-by-design)
 
+<p align="center">
+  <img src="docs/img/screenshot.png" alt="Desktop window: project folder, detection badge, output mode, build log" width="820">
+</p>
+
 </div>
 
 ---
@@ -38,6 +42,10 @@ versioned `.ece` container — or exports the project to a standalone Windows
 - **Validates** and **safely extracts** containers (path-traversal, symlink and
   depth checks; hashes verified before a file replaces its target).
 - **Diagnoses** build failures by classifying output into actionable categories.
+- **Reports readiness before you try**: `analyze` answers, per detected
+  project, whether *this* PC can produce an `.exe` and exactly what is missing.
+- **Ships verified builds**: `scripts\build_exe.ps1` runs each artifact it
+  produces — a build that cannot run is never called a release.
 
 ## Quick start
 
@@ -85,8 +93,8 @@ The console build is the product's command line, frozen:
 
 ```powershell
 dist\ECE-AutoCompiler-cli.exe --version
-dist\ECE-AutoCompiler-cli.exe analyze C:\ruta\al\proyecto
-dist\ECE-AutoCompiler-cli.exe exe C:\ruta\al\proyecto -o salida\app.exe
+dist\ECE-AutoCompiler-cli.exe analyze C:\path\to\project
+dist\ECE-AutoCompiler-cli.exe exe C:\path\to\project -o C:\out\app.exe
 ```
 
 Every build is verified before it is called a release: `tools\release_check.py`
@@ -181,9 +189,10 @@ produce a single `.exe`, so the folder layout does not apply to them.
 ## Tests
 
 ```powershell
-python run_tests.py            # unit + integration
+python run_tests.py            # unit + integration + GUI smoke
 python run_tests.py unit
 python run_tests.py integration -v
+python run_tests.py smoke      # GUI only; skips without a display
 ```
 
 Integration tests create throwaway projects and run **real** Python and Node
@@ -194,6 +203,19 @@ builds (Node tests skip automatically when Node is absent).
 See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md) for the full matrix
 of detection, which builds actually run, and which adapters are detection-only
 when a toolchain is missing.
+
+## Troubleshooting
+
+Most problems are one of these three, and each has a short answer:
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Antivirus flags or deletes a freshly built `.exe` | False positive on a self-extracting build: use `-Layout onedir`, exclude only the build folder, then report it to the vendor. |
+| "Cannot build a `<language>` .exe: missing `<tool>`" | A real toolchain is not installed. `analyze <folder>` says what this PC can build; nothing is ever faked. |
+| Extraction refused, or "file already exists" | The tool never overwrites silently: pass `--overwrite`, or the container's names collide on Windows. |
+
+Full guide, with the real paths for logs and history:
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Requirements
 
@@ -231,9 +253,10 @@ src/ece_autocompiler/
   security/      filename/path helpers for the UI and CLI
   ui/            Tkinter desktop interface
 examples/        runnable sample projects (Python, Node)
-docs/            architecture, format, security, supported projects, dev guide
-tests/           unit and integration tests (unittest)
-scripts/         smoke/E2E scripts + build_exe.ps1
+docs/            architecture, format, security, supported projects, troubleshooting, dev guide
+tests/           unit, integration and GUI smoke tests (unittest)
+scripts/         build_exe.ps1 (release build) + lint.ps1
+tools/           lint_stdlib.py (stdlib-only lint) + release_check.py (verifies a build)
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
@@ -244,7 +267,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 - [ECE format](docs/ECE_FORMAT.md) — the `.ece` container specification.
 - [Security](docs/SECURITY.md) — threat model, limits and consent model.
 - [Supported projects](docs/SUPPORTED_PROJECTS.md) — detection/build matrix.
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — antivirus/SmartScreen, missing
+  toolchains, log and history paths, container errors.
 - [Development](docs/DEVELOPMENT.md) — setup, tests, building the `.exe`.
+- [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — what changed, ready to
+  paste into a GitHub release.
 
 ## Contributing
 

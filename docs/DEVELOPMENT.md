@@ -38,6 +38,27 @@ automatically when Node.js is not installed. The GUI smoke test builds a real
 validation included) and performs a real extraction with the folder picker
 simulated; it skips itself when no display is available.
 
+## Building the release
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1                  # both builds, onefile
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Layout onedir  # folder layout
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Target cli     # console build only
+```
+
+`launcher_gui.py` is the windowed entry point, `launcher_cli.py` the console one
+(the frozen CLI has no window, so its output and exit codes stay usable from a
+script). The script verifies what it built instead of trusting that the files
+exist: `tools\release_check.py` runs the console build (`--version`), starts the
+desktop build to confirm it stays alive, and writes size and SHA256 for each
+artifact to `dist\release.json`. A build that cannot run fails the script, so a
+release is never announced on top of a broken artifact.
+
+`build/` and `dist/` are build artifacts and are not committed (see
+`.gitignore`). In a frozen build `sys.executable` is the app's own executable,
+so anything that must run *outside* the bundle (PyInstaller, a compiler) is
+located on `PATH` instead — see `build/exe_exporter.py`.
+
 ## Code layout
 
 See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
