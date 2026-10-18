@@ -32,7 +32,7 @@ from ..extraction import Extractor
 from ..logging_config import get_logger
 from ..security import sanitize_filename
 from ..version import APP_NAME, APP_VERSION, CONTAINER_FORMAT_VERSION
-from .theme import COLORS, apply_theme, configure_root_window
+from .theme import COLORS, apply_theme, configure_root_window, style_menu
 from .widgets import (
     LogConsole,
     StatusBar,
@@ -43,6 +43,20 @@ from .widgets import (
 )
 
 log = get_logger("ui")
+
+
+def _make_card(parent: tk.Misc, title: str, *, expand: bool = False) -> ttk.Frame:
+    """Create a bordered card with an accent section header; return its body.
+
+    The card shares the window colour and is delineated by a hairline border
+    (see ``theme``), so every plain child widget blends into it seamlessly.
+    """
+    card = ttk.Frame(parent, style="Card.TFrame", padding=(14, 11, 14, 13))
+    card.pack(fill="both" if expand else "x", expand=expand, padx=16, pady=(14, 0))
+    ttk.Label(card, text=title, style="Section.TLabel").pack(anchor="w", pady=(0, 7))
+    body = ttk.Frame(card)
+    body.pack(fill="both", expand=True)
+    return body
 
 
 @dataclass
@@ -68,34 +82,44 @@ class MainWindow(ttk.Frame):
 
         self._build_menu(master)
 
-        header = ttk.Frame(self, padding=(16, 14, 16, 0))
+        header = ttk.Frame(self, style="Header.TFrame", padding=(18, 13, 14, 11))
         header.pack(fill="x")
         ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text=f"v{APP_VERSION}", style="Chip.TLabel").pack(side="left", padx=(10, 0))
         ttk.Label(
-            header, text=f"v{APP_VERSION}  ·  container v{CONTAINER_FORMAT_VERSION}",
-            style="Subtitle.TLabel",
+            header, text=f"container format v{CONTAINER_FORMAT_VERSION}", style="Subtitle.TLabel"
         ).pack(side="left", padx=(10, 0))
+        ttk.Button(header, text="Toolchains", style="Ghost.TButton", command=self._show_toolchains).pack(
+            side="right", padx=(0, 4)
+        )
+        ttk.Button(header, text="Inspect .ece", style="Ghost.TButton", command=self._show_container).pack(
+            side="right", padx=(0, 12)
+        )
+        # Thin accent strip separating the header from the content.
+        ttk.Frame(self, style="AccentStrip.TFrame", height=3).pack(fill="x")
 
-        form = ttk.Frame(self, padding=(16, 12, 16, 0))
-        form.pack(fill="x")
-        form.columnconfigure(1, weight=1)
-
-        self.project_row = make_path_row(form, "Project folder", browse_command=self._browse_project)
+        # --- Project card -----------------------------------------------------
+        proj = _make_card(self, "PROJECT")
+        proj.columnconfigure(1, weight=1)
+        self.project_row = make_path_row(proj, "Project folder", browse_command=self._browse_project)
         self.project_row.frame.grid(row=0, column=0, columnspan=3, sticky="ew")
         self.project_row.var.trace_add("write", lambda *_: self._on_project_changed())
 
-        detect = ttk.Frame(form)
-        detect.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        detect = ttk.Frame(proj)
+        detect.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(9, 0))
         detect.columnconfigure(1, weight=1)
-        ttk.Label(detect, text="Detected", width=14).grid(row=0, column=0, sticky="w")
+        ttk.Label(detect, text="Detected", width=14, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
         self.detected_var = tk.StringVar(value="(not scanned yet)")
-        ttk.Label(detect, textvariable=self.detected_var).grid(row=0, column=1, sticky="w")
+        ttk.Label(detect, textvariable=self.detected_var, style="Badge.TLabel").grid(row=0, column=1, sticky="w")
         ttk.Button(detect, text="Rescan", command=self._detect).grid(row=0, column=2, sticky="e")
 
-        # --- Output mode -----------------------------------------------------
-        mode_row = ttk.Frame(form)
-        mode_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        ttk.Label(mode_row, text="Output", width=14).grid(row=0, column=0, sticky="w")
+        # --- Output card ------------------------------------------------------
+        out = _make_card(self, "OUTPUT")
+        out.columnconfigure(1, weight=1)
+
+        mode_row = ttk.Frame(out)
+        mode_row.grid(row=0, column=0, columnspan=3, sticky="ew")
+        ttk.Label(mode_row, text="Format", width=14, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
         self.mode_var = tk.StringVar(value="ece")
         ttk.Radiobutton(
             mode_row, text="Package as .ece", variable=self.mode_var, value="ece",
@@ -108,18 +132,22 @@ class MainWindow(ttk.Frame):
         self.exe_hint = ttk.Label(mode_row, text="", style="Muted.TLabel")
         self.exe_hint.grid(row=0, column=3, sticky="w", padx=(12, 0))
 
-        out = ttk.Frame(form)
-        out.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        out.columnconfigure(1, weight=1)
+        out_row = ttk.Frame(out)
+        out_row.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(9, 0))
+        out_row.columnconfigure(1, weight=1)
         self.output_label_var = tk.StringVar(value="Output .ece")
-        ttk.Label(out, textvariable=self.output_label_var, width=14).grid(row=0, column=0, sticky="w")
+        ttk.Label(out_row, textvariable=self.output_label_var, width=14, style="Muted.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
         self.output_var = tk.StringVar()
-        ttk.Entry(out, textvariable=self.output_var).grid(row=0, column=1, sticky="ew")
-        ttk.Button(out, text="Save as...", command=self._browse_output).grid(row=0, column=2, sticky="e", padx=(8, 0))
+        ttk.Entry(out_row, textvariable=self.output_var).grid(row=0, column=1, sticky="ew")
+        ttk.Button(out_row, text="Save as...", command=self._browse_output).grid(
+            row=0, column=2, sticky="e", padx=(8, 0)
+        )
 
-        # --- Options (adapt to the selected mode) ---------------------------
-        opts = ttk.Frame(form)
-        opts.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        # --- Options (adapt to the selected mode) ----------------------------
+        opts = ttk.Frame(out)
+        opts.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(9, 0))
         self.consent_var = tk.BooleanVar(value=False)
         self.overwrite_var = tk.BooleanVar(value=False)
         self.skip_install_var = tk.BooleanVar(value=True)
@@ -145,16 +173,18 @@ class MainWindow(ttk.Frame):
         ttk.Checkbutton(opts, text="Allow project scripts", variable=self.consent_var).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Checkbutton(opts, text="Overwrite output", variable=self.overwrite_var).grid(row=1, column=3, sticky="w")
 
-        actions = ttk.Frame(form)
-        actions.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        actions = ttk.Frame(out)
+        actions.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(13, 0))
         self.build_btn = ttk.Button(actions, text="Compile", style="Accent.TButton", command=self._build)
         self.build_btn.grid(row=0, column=0, sticky="w")
         self.cancel_btn = ttk.Button(actions, text="Cancel", command=self._cancel_build, state="disabled")
         self.cancel_btn.grid(row=0, column=1, sticky="w", padx=8)
         ttk.Button(actions, text="Open output folder", command=self._open_output).grid(row=0, column=2, sticky="w")
 
-        self.log = LogConsole(self, height=18)
-        self.log.pack(fill="both", expand=True, padx=16, pady=(14, 0))
+        # --- Log card ---------------------------------------------------------
+        log_card = _make_card(self, "LOG", expand=True)
+        self.log = LogConsole(log_card, height=14)
+        self.log.pack(fill="both", expand=True)
 
         ctx.status.pack(fill="x", side="bottom")
 
@@ -182,6 +212,8 @@ class MainWindow(ttk.Frame):
         helpm.add_command(label="About", command=self._show_about)
         menubar.add_cascade(label="Help", menu=helpm)
 
+        for menu in (menubar, filem, toolsm, helpm):
+            style_menu(menu)
         master.config(menu=menubar)
 
     # -------------------------------------------------------------- project
@@ -478,7 +510,10 @@ class _Dialog(tk.Toplevel):
         self.geometry(f"{width}x{height}")
         self.configure(bg=COLORS["bg"])
         self.transient(ctx.root)
-        ttk.Button(self, text="Close", command=self.destroy).pack(anchor="e", padx=12, pady=(10, 0))
+        header = ttk.Frame(self, style="Header.TFrame", padding=(14, 9, 10, 9))
+        header.pack(fill="x")
+        ttk.Label(header, text=title, style="Dialog.TLabel").pack(side="left")
+        ttk.Button(header, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
 
 
 class ToolchainDialog(_Dialog):
@@ -540,7 +575,7 @@ class ContainerDialog(_Dialog):
         bar.pack(fill="x")
         ttk.Button(bar, text="Open .ece...", command=self._open).pack(side="left")
         self.file_var = tk.StringVar(value="No file selected")
-        ttk.Label(bar, textvariable=self.file_var, style="Card.Muted.TLabel").pack(
+        ttk.Label(bar, textvariable=self.file_var, style="Muted.TLabel").pack(
             side="left", padx=10
         )
 
@@ -575,7 +610,7 @@ class ContainerDialog(_Dialog):
         )
         self.extract_btn.pack(side="left")
         self.status_var = tk.StringVar(value="")
-        ttk.Label(row, textvariable=self.status_var, style="Card.Muted.TLabel").pack(
+        ttk.Label(row, textvariable=self.status_var, style="Muted.TLabel").pack(
             side="left", padx=10
         )
 

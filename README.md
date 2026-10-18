@@ -85,18 +85,23 @@ Double-click `dist\ECE-AutoCompiler.exe` to launch the desktop window. The
 python -m ece_autocompiler gui
 ```
 
-A single, simple window:
+A single window with a dark theme, laid out as cards:
 
-1. **Project folder** — pick the folder (type auto-detected, shown as *Detected*).
-2. **Output** — choose **Package as `.ece`** or **Build `.exe`** (detects the
-   language); the output path and options adapt to the mode.
-3. **Compile** — runs the build / export and shows progress in the log.
+* **Header** — app name, version chip, and quick buttons for **Toolchains** and
+  **Inspect / Extract `.ece`**.
+* **Project** — pick the folder (type auto-detected; the result appears as a
+  badge) with a **Rescan** button.
+* **Output** — choose **Package as `.ece`** or **Build `.exe`** (detects the
+  language); the output path and options adapt to the mode. The **Compile**
+  button is the prominent one; **Cancel** and **Open output folder** sit next
+  to it.
+* **Log** — colour-coded build output.
 
 Options per mode — `.ece`: compression, skip install. `.exe`: console window,
 single file. Shared: allow project scripts (consent), overwrite output.
 
-Menus: **File** (open output/work folder), **Tools** (Toolchains…, Build history…),
-**Help** (About).
+Menus: **File** (open output/work folder), **Tools** (Inspect / Extract `.ece`…,
+Toolchains…, Build history…), **Help** (About).
 
 ## Command line
 

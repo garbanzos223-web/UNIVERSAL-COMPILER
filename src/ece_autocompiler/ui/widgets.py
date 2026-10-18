@@ -143,10 +143,10 @@ class StatusBar(ttk.Frame):
 
         self.var = tk.StringVar(value="Ready.")
         self.label = ttk.Label(self, textvariable=self.var, style="Panel.TLabel")
-        self.label.grid(row=0, column=0, sticky="w", padx=10, pady=4)
+        self.label.grid(row=0, column=0, sticky="w", padx=12, pady=(5, 5))
 
-        self.progress = ttk.Progressbar(self, mode="determinate", maximum=100, length=220)
-        self.progress.grid(row=0, column=1, sticky="e", padx=10, pady=4)
+        self.progress = ttk.Progressbar(self, mode="determinate", maximum=100, length=240)
+        self.progress.grid(row=0, column=1, sticky="e", padx=12, pady=(5, 5))
 
     def set(self, message: str) -> None:
         self.var.set(message)
