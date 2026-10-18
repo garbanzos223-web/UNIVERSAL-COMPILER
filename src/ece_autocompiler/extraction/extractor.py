@@ -20,6 +20,7 @@ from ..config import Limits
 from ..container.model import FileEntry
 from ..container.reader import ContainerReader
 from ..container.security import ensure_no_symlink_target, is_junction_or_symlink, resolve_destination
+from ..container.security import describe_path_collisions, find_path_collisions
 from ..container.signature import (
     STATE_INVALID,
     STATE_KEY_MISSING,
@@ -113,6 +114,24 @@ class Extractor:
             entries = reader.entries()
             total = sum(e.size for e in entries if selection is None or e.path in selection)
             done = 0
+
+            # Windows is case-insensitive: two entries whose names differ only
+            # by case (or the same name twice) would overwrite each other or
+            # fail halfway. Detect it before the first byte is written, so a
+            # hostile or foreign container cannot leave a half-extracted tree.
+            collisions = find_path_collisions(
+                e.path for e in entries if selection is None or e.path in selection
+            )
+            if collisions:
+                raise IntegrityError(
+                    "The container declares file names that Windows treats as the "
+                    "same file; nothing was extracted",
+                    detail=(
+                        describe_path_collisions(collisions)
+                        + " - rebuild the container without duplicate names, "
+                        "or extract it on a case-sensitive system"
+                    ),
+                )
 
             for entry in entries:
                 if cancel is not None and cancel():

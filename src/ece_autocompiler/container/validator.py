@@ -16,6 +16,7 @@ from ..errors import EceError
 from ..logging_config import get_logger
 from .model import compute_content_hash
 from .reader import ContainerReader
+from .security import describe_path_collisions, find_path_collisions
 from .signature import (
     STATE_INVALID,
     STATE_KEY_MISSING,
@@ -181,6 +182,21 @@ def validate_container(
                     SEVERITY_WARNING,
                     "ece.container.no_content_hash",
                     "Manifest has no content hash; integrity cannot be checked",
+                )
+            )
+
+        # Names that collide on Windows (case-only differences or a repeated
+        # path) validate as a warning, not an error: the container is intact,
+        # but extracting it here would overwrite files or stop halfway.
+        collisions = find_path_collisions(e.path for e in index.entries)
+        if collisions:
+            report.issues.append(
+                ValidationIssue(
+                    SEVERITY_WARNING,
+                    "ece.container.path_collision",
+                    "Entry names collide on Windows (case-insensitive file system); "
+                    "extraction will refuse until the container is rebuilt",
+                    describe_path_collisions(collisions),
                 )
             )
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path, PurePosixPath
+from typing import Iterable
 
 from ..errors import UnsafePathError
 from .spec import FORMAT_VERSION  # noqa: F401  (re-export convenience)
@@ -219,3 +220,43 @@ def check_depth(entry_path: str, max_depth: int = DEFAULT_MAX_DEPTH) -> None:
     depth = entry_path.count("/") + 1
     if depth > max_depth:
         raise UnsafePathError("Entry path nesting is too deep", detail=f"{depth} > {max_depth}")
+
+
+def windows_collision_key(entry_path: str) -> str:
+    """Return the key under which Windows would store *entry_path*.
+
+    NTFS is case-insensitive, so ``Readme.txt`` and ``README.TXT`` are the same
+    file on disk even though they are different strings. Comparing paths by
+    this key finds containers whose entries would silently overwrite each other
+    (or trip over "file already exists") during extraction.
+
+    *entry_path* is expected to have passed :func:`normalize_entry_path`, so no
+    trailing dots/spaces, no empty segments and no backslashes remain.
+    """
+    return "/".join(
+        segment.casefold() for segment in entry_path.split("/") if segment not in ("", ".")
+    )
+
+
+def find_path_collisions(paths: Iterable[str]) -> dict[str, list[str]]:
+    """Group *paths* that resolve to the same Windows file.
+
+    Returns one entry per colliding group (``key -> distinct paths``, in the
+    order seen). A path declared twice is a collision with itself; the group
+    then holds that single name. Groups with a single path are not returned.
+    """
+    groups: dict[str, list[str]] = {}
+    for path in paths:
+        groups.setdefault(windows_collision_key(path), []).append(path)
+    return {key: list(dict.fromkeys(names)) for key, names in groups.items() if len(names) > 1}
+
+
+def describe_path_collisions(collisions: dict[str, list[str]]) -> str:
+    """Render collision groups as one readable line, e.g. ``a.txt | A.TXT``."""
+    parts: list[str] = []
+    for names in collisions.values():
+        if len(names) == 1:
+            parts.append(f"{names[0]} (declared more than once)")
+        else:
+            parts.append(" | ".join(names))
+    return "; ".join(parts)

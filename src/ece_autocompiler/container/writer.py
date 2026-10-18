@@ -22,7 +22,7 @@ from ..errors import ContainerError, ContainerFormatError, LimitExceededError
 from ..logging_config import get_logger
 from .codec import compress, new_stream_encoder
 from .model import FileEntry, Index, Manifest, compute_content_hash
-from .security import MAX_SEGMENT_LENGTH, normalize_entry_path
+from .security import MAX_SEGMENT_LENGTH, normalize_entry_path, windows_collision_key
 from .spec import (
     COMPRESSION_BY_NAME,
     COMPRESSION_NONE,
@@ -226,6 +226,7 @@ class ContainerWriter:
             )
 
         seen: set[str] = set()
+        seen_keys: dict[str, str] = {}
         for item in items:
             normalized = normalize_entry_path(
                 item.path,
@@ -234,6 +235,17 @@ class ContainerWriter:
             )
             if normalized in seen:
                 raise ContainerFormatError("Duplicate path in payload", detail=normalized)
+            # Windows is case-insensitive: "readme.txt" and "README.TXT" are the
+            # same on-disk file. Writing both would produce a container that
+            # cannot be extracted here, so refuse at build time.
+            key = windows_collision_key(normalized)
+            if key in seen_keys:
+                raise ContainerFormatError(
+                    "Payload contains paths that Windows treats as the same file",
+                    detail=f"{seen_keys[key]} | {normalized}",
+                )
+            seen.add(normalized)
+            seen_keys[key] = normalized
             if len(normalized.rsplit("/", 1)[-1]) > MAX_SEGMENT_LENGTH:
                 raise LimitExceededError(
                     "File name component exceeds the maximum length", detail=normalized
