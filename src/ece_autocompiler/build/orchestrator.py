@@ -6,15 +6,13 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
-from ..adapters.base import Artifact, BuildPlan, BuildResult, ProgressCallback
+from ..adapters.base import Artifact, BuildResult, ProgressCallback
 from ..adapters.registry import AdapterRegistry
 from ..config import AppConfig, Limits
 from ..container import ContainerWriter, Manifest, PayloadItem
 from ..detection import scan
 from ..errors import BuildError, ConfigurationError
-from ..extraction import Extractor
 from ..logging_config import get_logger
 
 log = get_logger("build.orchestrator")

@@ -12,7 +12,6 @@ main loop, which is the only safe way to touch widgets).
 from __future__ import annotations
 
 import os
-import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -778,12 +777,7 @@ def _open_folder(path: Path) -> None:
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     try:
-        if sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            os.system(f'open "{path}"')
-        else:
-            os.system(f'xdg-open "{path}"')
+        os.startfile(str(path))  # type: ignore[attr-defined]  # Windows-only tool
     except OSError as exc:
         log.warning("Could not open folder %s: %s", path, exc)
 

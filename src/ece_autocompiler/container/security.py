@@ -8,6 +8,7 @@ Rules enforced (see docs/SECURITY.md):
   * paths are UTF-8, normalized to forward slashes, relative to the extraction root;
   * no leading slash, no backslash, no Windows drive letter, no UNC prefix;
   * no '.' or '..' segments, no trailing slash, no empty segments;
+  * no trailing dot/space inside a segment, no reserved device names;
   * no NUL or other C0/C1 control characters;
   * bounded segment count, total length and per-segment length;
   * the resolved destination must remain inside the chosen root.
@@ -38,6 +39,16 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # Matches a Windows drive letter such as "C:" or "c:/x" anywhere in the first
 # two characters, or UNC-style leading double slash.
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
+
+# DOS device names reserved by Windows, with or without an extension: writing
+# "con" or "con.txt" fails with a raw OS error, so refuse them up front.
+_WINDOWS_RESERVED = frozenset(
+    {
+        "con", "prn", "aux", "nul",
+        *{f"com{i}" for i in range(1, 10)},
+        *{f"lpt{i}" for i in range(1, 10)},
+    }
+)
 
 
 def normalize_entry_path(
@@ -108,6 +119,17 @@ def normalize_entry_path(
         if len(segment) > MAX_SEGMENT_LENGTH:
             raise UnsafePathError(
                 "Entry path segment is too long", detail=segment[:64]
+            )
+        # Windows silently strips trailing dots and spaces when creating a
+        # file, so "a.txt." and "a.txt" would land on the same on-disk name:
+        # reject the ambiguity instead of letting extraction collide.
+        if segment != segment.rstrip(". "):
+            raise UnsafePathError(
+                "Entry path segment ends with a dot or space", detail=segment
+            )
+        if segment.split(".", 1)[0].lower() in _WINDOWS_RESERVED:
+            raise UnsafePathError(
+                "Entry path uses a reserved Windows device name", detail=segment
             )
         safe_segments.append(segment)
 

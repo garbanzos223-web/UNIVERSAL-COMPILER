@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,7 +29,6 @@ from ..container.signature import (
 )
 from ..errors import (
     ContainerError,
-    ContainerFormatError,
     ExtractionConflictError,
     ExtractionError,
     IntegrityError,
@@ -78,7 +76,13 @@ class Extractor:
         cancel: CancelCheck | None = None,
     ) -> ExtractionReport:
         destination = Path(destination)
-        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ExtractionError(
+                "Cannot create the destination directory",
+                detail=f"{destination}: {exc.strerror or exc}",
+            ) from exc
         if not destination.is_dir():
             raise ExtractionError("Destination is not a directory", detail=str(destination))
 

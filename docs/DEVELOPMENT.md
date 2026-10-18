@@ -19,9 +19,10 @@ python -m ece_autocompiler gui
 Tests use the standard-library `unittest` (no pytest dependency).
 
 ```powershell
-python run_tests.py                 # unit + integration
+python run_tests.py                 # unit + integration + GUI smoke
 python run_tests.py unit
 python run_tests.py integration -v
+python run_tests.py smoke           # GUI only; skips without a display
 ```
 
 Or directly with unittest discovery (the test tree bootstraps `src` onto
@@ -32,7 +33,10 @@ python -m unittest discover -s tests -t .
 ```
 
 The integration tests build real sample projects. The Node ones skip
-automatically when Node.js is not installed.
+automatically when Node.js is not installed. The GUI smoke test builds a real
+`.ece` container, loads it through the actual `ContainerDialog` (deep
+validation included) and performs a real extraction with the folder picker
+simulated; it skips itself when no display is available.
 
 ## Code layout
 
@@ -79,6 +83,18 @@ src/ece_autocompiler/
 `container/spec.py` is the executable reference. If you change the byte layout,
 update [ECE_FORMAT.md](ECE_FORMAT.md) in the same change. Backward-compatible
 changes bump `FORMAT_MINOR`; breaking changes bump `FORMAT_MAJOR`.
+
+## Lint (stdlib-only)
+
+The repository ships its own zero-dependency lint: byte-compilation plus AST
+checks for unused imports, stray `print()` calls, `shell=True`, `os.system`
+and `eval`/`exec`:
+
+```powershell
+powershell -File scripts\lint.ps1
+```
+
+CI runs it on every push. Exit code is non-zero on the first problem.
 
 ## Style tools (optional)
 

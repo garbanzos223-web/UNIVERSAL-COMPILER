@@ -1,9 +1,10 @@
 """Run the test suite without installing the package.
 
 Usage:
-    python run_tests.py            # unit + integration
+    python run_tests.py            # unit + integration + GUI smoke
     python run_tests.py unit       # unit only
     python run_tests.py integration
+    python run_tests.py smoke      # GUI smoke only (skips without a display)
     python run_tests.py -v
 """
 
@@ -24,7 +25,7 @@ def main(argv: list[str]) -> int:
     verbosity = 2 if "-v" in argv else 1
     args = [a for a in argv if a != "-v"]
 
-    if args and args[0] in ("unit", "integration"):
+    if args and args[0] in ("unit", "integration", "smoke"):
         start_dir = str(ROOT / "tests" / args[0])
     else:
         start_dir = str(ROOT / "tests")

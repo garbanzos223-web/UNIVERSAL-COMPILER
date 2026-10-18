@@ -12,7 +12,7 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable
 
 ProgressCallback = Callable[[str, int, int], None]
 CancelToken = threading.Event

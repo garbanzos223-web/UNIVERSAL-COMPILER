@@ -12,10 +12,7 @@ Also, we can offer a simple "package sources + bytecompile check" as the default
 
 from __future__ import annotations
 
-import json
-import os
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from ..detection import ScanResult, get_tool

@@ -34,7 +34,6 @@ from .spec import (
     HEADER_SIZE,
     HEADER_STRUCT,
     MAGIC,
-    NO_VALUE,
 )
 
 log = get_logger("container.reader")
