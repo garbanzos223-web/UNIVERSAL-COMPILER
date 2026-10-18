@@ -222,19 +222,23 @@ def cmd_build(args) -> int:
     report = validate_container(package.container_path, deep=True)
     if report.ok:
         _print(f"Validation: OK ({report.entry_count} files, {report.total_uncompressed} bytes)")
+        record_ok, record_message, record_exit = True, "Build and package succeeded", 0
     else:
         _print("Validation: FAILED")
         for issue in report.errors:
             _print(f"  {issue}")
+        # The container exists but did not validate: record the failure
+        # honestly instead of claiming success.
+        record_ok, record_message, record_exit = False, "Validation failed", 1
 
     history_append(
         make_record(
             root,
-            ok=True,
-            exit_code=0,
+            ok=record_ok,
+            exit_code=record_exit,
             duration_seconds=result.duration_seconds,
             container_path=package.container_path,
-            message="Build and package succeeded",
+            message=record_message,
         ),
         base=cfg.work_dir,
     )

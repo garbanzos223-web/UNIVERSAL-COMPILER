@@ -27,11 +27,13 @@ from ..container.reader import ContainerReader
 from ..detection import discover_all, scan
 from ..detection.detector import ADAPTER_LABELS
 from ..diagnostics import classify, first_actionable, summarize
+from ..errors import BuildCancelledError
 from ..extraction import Extractor
 from ..logging_config import get_logger
 from ..security import sanitize_filename
 from ..version import APP_NAME, APP_VERSION, CONTAINER_FORMAT_VERSION
-from .theme import COLORS, apply_theme, configure_root_window, style_menu
+from .state import STATE_UI, UiState
+from .theme import COLORS, apply_theme, configure_root_window, enable_dark_titlebar, style_menu
 from .widgets import (
     LogConsole,
     StatusBar,
@@ -78,6 +80,7 @@ class MainWindow(ttk.Frame):
         self._adapter_by_label: dict[str, str] = {}
         self._cancel = threading.Event()
         self._building = False
+        self._state = UiState.IDLE
 
         self._build_menu(master)
 
@@ -88,8 +91,11 @@ class MainWindow(ttk.Frame):
         ttk.Label(
             header, text=f"container format v{CONTAINER_FORMAT_VERSION}", style="Subtitle.TLabel"
         ).pack(side="left", padx=(10, 0))
+        # State pill: packed first so it sits at the far right of the header.
+        self.state_badge = ttk.Label(header, text="Ready", style="StateIdle.TLabel")
+        self.state_badge.pack(side="right", padx=(10, 0))
         ttk.Button(header, text="Toolchains", style="Ghost.TButton", command=self._show_toolchains).pack(
-            side="right", padx=(0, 4)
+            side="right", padx=(0, 6)
         )
         ttk.Button(header, text="Inspect .ece", style="Ghost.TButton", command=self._show_container).pack(
             side="right", padx=(0, 12)
@@ -183,6 +189,8 @@ class MainWindow(ttk.Frame):
         self.build_btn.grid(row=0, column=0, sticky="w")
         self.cancel_btn = ttk.Button(actions, text="Cancel", command=self._cancel_build, state="disabled")
         self.cancel_btn.grid(row=0, column=1, sticky="w", padx=8)
+        # Single transition point: badge + buttons always derive from state.py.
+        self._set_state(UiState.IDLE)
         ttk.Button(actions, text="Open output folder", command=self._open_output).grid(row=0, column=2, sticky="w")
 
         # --- Log card ---------------------------------------------------------
@@ -194,17 +202,76 @@ class MainWindow(ttk.Frame):
 
         self._on_mode_changed()
         self.log.append("Select a project folder, then press Compile.", "muted")
+        self._bind_shortcuts(master)
+
+    # ---------------------------------------------------------------- states
+    def _set_state(self, state: UiState, *, when: UiState | None = None) -> bool:
+        """The single transition point: badge, buttons and flags derive from STATE_UI.
+
+        ``when`` guards asynchronous transitions: a detection callback that
+        arrives after a build already started must not clobber the new state.
+        Returns whether the transition was applied.
+        """
+        if when is not None and self._state is not when:
+            return False
+        spec = STATE_UI[state]
+        self._state = state
+        self._building = state is UiState.COMPILING
+        self.state_badge.configure(text=spec.badge_text, style=spec.badge_style)
+        self.build_btn.configure(state=spec.build_state)
+        self.cancel_btn.configure(state=spec.cancel_state)
+        return True
+
+    # -------------------------------------------------------------- shortcuts
+    def _bind_shortcuts(self, master: tk.Tk) -> None:
+        """Global accelerators (mirrored in the menu labels; see _build_menu)."""
+        master.bind_all("<F5>", self._key_rescan)
+        master.bind_all("<Control-Return>", self._key_compile)
+        master.bind_all("<Escape>", self._key_cancel)
+        master.bind_all("<Control-Shift-C>", self._key_copy_log)
+        master.bind_all("<Control-O>", self._key_open_project)
+
+    def _key_rescan(self, _event=None):
+        if not self._building:
+            self._detect()
+        return "break"
+
+    def _key_compile(self, _event=None):
+        if not self._building:
+            self._build()
+        return "break"
+
+    def _key_cancel(self, _event=None):
+        if self._state is UiState.COMPILING:
+            self._cancel_build()
+        return "break"
+
+    def _key_copy_log(self, _event=None):
+        self.log.copy_all()
+        return "break"
+
+    def _key_open_project(self, _event=None):
+        self._browse_project()
+        return "break"
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self, master: tk.Tk) -> None:
         menubar = tk.Menu(master)
 
         filem = tk.Menu(menubar, tearoff=0)
+        filem.add_command(label="Open project folder...", accelerator="Ctrl+O", command=self._browse_project)
+        filem.add_command(label="Rescan detection", accelerator="F5", command=self._detect)
+        filem.add_separator()
         filem.add_command(label="Open output folder", command=self._open_output)
         filem.add_command(label="Open work folder", command=lambda: _open_folder(self.ctx.config.work_dir))
         filem.add_separator()
         filem.add_command(label="Exit", command=master.destroy)
         menubar.add_cascade(label="File", menu=filem)
+
+        buildm = tk.Menu(menubar, tearoff=0)
+        buildm.add_command(label="Compile", accelerator="Ctrl+Return", command=self._build)
+        buildm.add_command(label="Cancel build", accelerator="Esc", command=self._cancel_build)
+        menubar.add_cascade(label="Build", menu=buildm)
 
         toolsm = tk.Menu(menubar, tearoff=0)
         toolsm.add_command(label="Inspect / Extract .ece...", command=self._show_container)
@@ -216,7 +283,7 @@ class MainWindow(ttk.Frame):
         helpm.add_command(label="About", command=self._show_about)
         menubar.add_cascade(label="Help", menu=helpm)
 
-        for menu in (menubar, filem, toolsm, helpm):
+        for menu in (menubar, filem, buildm, toolsm, helpm):
             style_menu(menu)
         master.config(menu=menubar)
 
@@ -272,13 +339,21 @@ class MainWindow(ttk.Frame):
         if not path or not Path(path).exists():
             messagebox.showwarning(APP_NAME, "Choose an existing project folder first.")
             return
+        if self._state is UiState.COMPILING:
+            self.ctx.status.set("Compiling right now — rescan when it finishes (F5).")
+            return
+        if self._state is UiState.DETECTING:
+            return  # a scan is already in flight
+        self._set_state(UiState.DETECTING)
         self.ctx.status.set("Scanning project...")
+        self.ctx.status.set_indeterminate()  # scan length is unknown: animate, don't fake 0%
         self.log.append(f"Scanning {path} ...", "accent")
 
         def work():
             return scan(Path(path))
 
         def done(result):
+            still_scanning = self._state is UiState.DETECTING
             self._candidates = result.candidates
             self._adapter_by_label = {}
             labels = []
@@ -308,9 +383,12 @@ class MainWindow(ttk.Frame):
                 self.log.append(result.summary(), "warn")
             for note in result.notes:
                 self.log.append(f"note: {note}", "muted")
-            self.ctx.status.set("Ready.")
+            if still_scanning:
+                self.ctx.status.set("Ready.")
+                self.ctx.status.reset()
+            self._set_state(UiState.IDLE, when=UiState.DETECTING)
 
-        self.ctx.runner.run(work, done, lambda e: self._fail("Detection failed", e))
+        self.ctx.runner.run(work, done, lambda e: self._fail("Detection failed", e, when=UiState.DETECTING))
 
     # ----------------------------------------------------------- build flow
     def _build(self) -> None:
@@ -331,10 +409,8 @@ class MainWindow(ttk.Frame):
         ):
             return
 
-        self._building = True
         self._cancel = threading.Event()
-        self.build_btn.configure(state="disabled")
-        self.cancel_btn.configure(state="normal")
+        self._set_state(UiState.COMPILING)
         self.log.clear()
         self.log.append(f"Building {project}", "accent")
         self.ctx.status.set("Building...")
@@ -395,15 +471,27 @@ class MainWindow(ttk.Frame):
         return self.exe_mode_var.get() == "onefile"
 
     def _exe_done(self, result) -> None:
-        self._finish_build()
         if not result.ok:
+            self._finish_build(UiState.ERROR)
             self.log.append(f"Executable export failed: {result.message}", "err")
             for err in result.errors[:8]:
                 self.log.append(f"  {err}", "err")
             if result.log_path:
                 self.log.append(f"Log: {result.log_path}", "muted")
             self.ctx.status.set("Executable export failed.")
+            # Failed exports belong in the history too; never silently skipped.
+            build_history.append(
+                build_history.make_record(
+                    Path(self.project_row.var.get()),
+                    ok=False,
+                    exit_code=result.exit_code or -1,
+                    duration_seconds=result.duration_seconds,
+                    message=f"Executable export failed: {result.message}",
+                ),
+                base=self.ctx.config.work_dir,
+            )
             return
+        self._finish_build(UiState.SUCCESS)
         self.log.append(f"Executable created in {result.duration_seconds:.1f}s", "ok")
         self.log.append(f"  .exe: {result.exe_path}", "ok")
         size = result.exe_path.stat().st_size
@@ -425,8 +513,8 @@ class MainWindow(ttk.Frame):
 
     def _build_done(self, result) -> None:
         build_result, package = result
-        self._finish_build()
         if not build_result.ok:
+            self._finish_build(UiState.ERROR)
             self.log.append("Build failed.", "err")
             diags = classify("\n".join(build_result.errors))
             if diags:
@@ -443,8 +531,10 @@ class MainWindow(ttk.Frame):
             return
 
         if not package.ok:
+            self._finish_build(UiState.ERROR)
             self.log.append(f"Packaging failed: {package.message}", "err")
             self.ctx.status.set("Packaging failed.")
+            self._record(False, build_result, None, message=f"Packaging failed: {package.message}")
             return
 
         self.log.append(f"Build succeeded in {build_result.duration_seconds:.1f}s", "ok")
@@ -455,14 +545,19 @@ class MainWindow(ttk.Frame):
                 f"Validation: OK ({report.entry_count} files, {report.total_uncompressed} bytes)", "ok"
             )
             self.ctx.status.set("Done.")
+            self._finish_build(UiState.SUCCESS)
+            self._record(True, build_result, package.container_path)
         else:
             self.log.append("Validation: FAILED", "err")
             for issue in report.errors:
                 self.log.append(f"  {issue}", "err")
             self.ctx.status.set("Validation failed.")
-        self._record(True, build_result, package.container_path)
+            # The container exists but did not validate: record the failure
+            # honestly (ok=False) instead of claiming success.
+            self._finish_build(UiState.ERROR)
+            self._record(False, build_result, package.container_path, message="Validation failed")
 
-    def _record(self, ok: bool, build_result, container_path) -> None:
+    def _record(self, ok: bool, build_result, container_path, *, message: str | None = None) -> None:
         build_history.append(
             build_history.make_record(
                 Path(self.project_row.var.get()),
@@ -470,25 +565,39 @@ class MainWindow(ttk.Frame):
                 exit_code=build_result.exit_code,
                 duration_seconds=build_result.duration_seconds,
                 container_path=container_path,
-                message="Build and package succeeded" if ok else "Build failed",
+                message=message or ("Build and package succeeded" if ok else "Build failed"),
             ),
             base=self.ctx.config.work_dir,
         )
 
     def _cancel_build(self) -> None:
+        if self._state is not UiState.COMPILING:
+            return
         self._cancel.set()
         self.log.append("Cancellation requested...", "warn")
 
-    def _finish_build(self) -> None:
-        self._building = False
-        self.build_btn.configure(state="normal")
-        self.cancel_btn.configure(state="disabled")
+    def _finish_build(self, state: UiState = UiState.IDLE) -> None:
+        """End a build: transition to *state* and return the progress bar to rest."""
+        self._set_state(state)
         self.ctx.status.reset()
 
-    def _fail(self, title: str, exc: BaseException) -> None:
-        self._finish_build()
-        self.log.append(f"{title}: {exc}", "err")
-        self.ctx.status.set(title)
+    def _fail(self, title: str, exc: BaseException, *, when: UiState | None = None) -> None:
+        """Land an exception on ERROR (or CANCELLED for a user cancellation).
+
+        The log line is always written; the state/status update only applies
+        when ``when`` still matches, so a late failure cannot repaint a window
+        that has moved on to another task.
+        """
+        cancelled = isinstance(exc, BuildCancelledError)
+        state = UiState.CANCELLED if cancelled else UiState.ERROR
+        applied = self._set_state(state, when=when)
+        if cancelled:
+            self.log.append("Cancelled by the user.", "warn")
+        else:
+            self.log.append(f"{title}: {exc}", "err")
+        if applied:
+            self.ctx.status.set("Cancelled." if cancelled else title)
+            self.ctx.status.reset()
 
     def _open_output(self) -> None:
         value = self.output_var.get().strip()
@@ -518,6 +627,7 @@ class _Dialog(tk.Toplevel):
         self.title(f"{APP_NAME} — {title}")
         self.geometry(f"{width}x{height}")
         self.configure(bg=COLORS["bg"])
+        enable_dark_titlebar(self)
         self.transient(ctx.root)
         header = ttk.Frame(self, style="Header.TFrame", padding=(14, 9, 10, 9))
         header.pack(fill="x")

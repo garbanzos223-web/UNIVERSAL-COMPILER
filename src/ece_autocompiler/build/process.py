@@ -177,6 +177,10 @@ def run_command(
                     stderr=subprocess.STDOUT,
                     bufsize=1,
                     text=True,
+                    # Never let an undecodable byte kill the reader thread:
+                    # a dead reader truncates the log while the build keeps
+                    # running, which hides the real cause of a failure.
+                    errors="replace",
                     env=base_env,
                     shell=False,
                 )

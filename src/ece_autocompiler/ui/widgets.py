@@ -96,20 +96,55 @@ def make_path_row(
     return PathRow(frame=frame, var=var, button=button, entry=entry)
 
 
+#: Severity filters offered by the log toolbar (``all`` = no filtering).
+LOG_FILTERS: tuple[str, ...] = ("all", "info", "ok", "warn", "err", "muted", "accent")
+
+
 class LogConsole(ttk.Frame):
-    """Read-only, colourised text area with a tag for each severity."""
+    """Read-only, colourised text area with a tag for each severity.
+
+    Lines are recorded in full (``get``) and *rendered* through the active
+    toolbar filter, so Copy/Save always operate on exactly what is visible
+    while ``get`` keeps the complete log for programmatic use.
+    """
 
     def __init__(self, parent: tk.Misc, *, height: int = 14) -> None:
         super().__init__(parent, style="Panel.TFrame")
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
+        self._lines: list[tuple[str, str]] = []
+
+        # --- toolbar (row 0) -------------------------------------------------
+        bar = ttk.Frame(self, style="Panel.TFrame")
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        bar.columnconfigure(0, weight=1)
+
+        self.count_var = tk.StringVar(value="0 lines")
+        ttk.Label(bar, textvariable=self.count_var, style="Panel.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+
+        controls = ttk.Frame(bar, style="Panel.TFrame")
+        controls.grid(row=0, column=1, sticky="e")
+        ttk.Label(controls, text="Show", style="Panel.TLabel").pack(side="left", padx=(0, 4))
+        self.filter_var = tk.StringVar(value="all")
+        box = ttk.Combobox(
+            controls, textvariable=self.filter_var, values=LOG_FILTERS,
+            state="readonly", width=8,
+        )
+        box.pack(side="left", padx=(0, 8))
+        box.bind("<<ComboboxSelected>>", lambda _e: self.set_filter(self.filter_var.get()))
+        ttk.Button(controls, text="Copy", command=self.copy_all).pack(side="left", padx=(0, 4))
+        ttk.Button(controls, text="Save...", command=self.save_log).pack(side="left")
+
+        # --- text + scrollbar (row 1) ---------------------------------------
         self.text = tk.Text(self, height=height, wrap="word", state="disabled")
         configure_text_widget(self.text)
-        self.text.grid(row=0, column=0, sticky="nsew")
+        self.text.grid(row=1, column=0, sticky="nsew")
 
         scroll = ttk.Scrollbar(self, orient="vertical", command=self.text.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
+        scroll.grid(row=1, column=1, sticky="ns")
         self.text.configure(yscrollcommand=scroll.set)
 
         self.text.tag_configure("info", foreground=COLORS["fg"])
@@ -119,19 +154,90 @@ class LogConsole(ttk.Frame):
         self.text.tag_configure("err", foreground=COLORS["err"])
         self.text.tag_configure("accent", foreground=COLORS["accent"])
 
+        self._update_count()
+
+    # ------------------------------------------------------------- recording
+    def _matches(self, tag: str) -> bool:
+        return self.filter_var.get() in ("all", tag)
+
     def append(self, message: str, tag: str = "info") -> None:
-        self.text.configure(state="normal")
-        self.text.insert("end", message + "\n", tag)
-        self.text.see("end")
-        self.text.configure(state="disabled")
+        self._lines.append((message, tag))
+        if self._matches(tag):
+            self.text.configure(state="normal")
+            self.text.insert("end", message + "\n", tag)
+            self.text.see("end")
+            self.text.configure(state="disabled")
+        self._update_count()
 
     def clear(self) -> None:
+        self._lines.clear()
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         self.text.configure(state="disabled")
+        self._update_count()
 
     def get(self) -> str:
+        """The complete log as recorded, regardless of the active filter."""
+        if not self._lines:
+            return ""
+        return "\n".join(message for message, _ in self._lines) + "\n"
+
+    def get_visible(self) -> str:
+        """What the console currently shows (i.e. what Copy/Save operate on)."""
         return self.text.get("1.0", "end")
+
+    # --------------------------------------------------------------- toolbar
+    def set_filter(self, tag: str) -> None:
+        """Re-render the console showing only *tag* (or everything for 'all')."""
+        if tag not in LOG_FILTERS:
+            tag = "all"
+        self.filter_var.set(tag)
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        for message, line_tag in self._lines:
+            if tag in ("all", line_tag):
+                self.text.insert("end", message + "\n", line_tag)
+        self.text.see("end")
+        self.text.configure(state="disabled")
+        self._update_count()
+
+    def copy_all(self) -> str:
+        """Put the visible log on the clipboard; returns the copied text."""
+        content = self.get_visible()
+        try:
+            top = self.winfo_toplevel()
+            top.clipboard_clear()
+            top.clipboard_append(content)
+        except tk.TclError:  # pragma: no cover - clipboard-less sessions
+            pass
+        return content
+
+    def save_log(self, parent: tk.Misc | None = None) -> str | None:
+        """Ask for a file and write the visible log there; returns the path."""
+        from tkinter import filedialog
+
+        path = filedialog.asksaveasfilename(
+            parent=parent or self,
+            title="Save build log",
+            defaultextension=".log",
+            filetypes=[("Log file", "*.log"), ("Text file", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return None
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(self.get_visible())
+        except OSError:
+            return None
+        return str(path)
+
+    def _update_count(self) -> None:
+        total = len(self._lines)
+        shown = sum(1 for _, tag in self._lines if self._matches(tag))
+        if shown == total:
+            self.count_var.set(f"{total} line{'s' if total != 1 else ''}")
+        else:
+            self.count_var.set(f"{shown} of {total} lines")
 
 
 class StatusBar(ttk.Frame):
@@ -151,14 +257,34 @@ class StatusBar(ttk.Frame):
     def set(self, message: str) -> None:
         self.var.set(message)
 
+    def set_indeterminate(self) -> None:
+        """Animated bar for work whose length is unknown (scans, packaging).
+
+        An honest animation instead of a bar frozen at 0% pretending to be
+        real progress.
+        """
+        if str(self.progress.cget("mode")) != "indeterminate":
+            self.progress.configure(mode="indeterminate")
+            self.progress.start(40)
+
     def set_progress(self, done: int, total: int) -> None:
-        if total <= 0:
-            self.progress.configure(value=0)
-        else:
-            self.progress.configure(value=max(0, min(100, int(done * 100 / total))))
+        """Determinate progress for real milestones; animation otherwise.
+
+        ``done <= 0`` means "announcing a phase, total known later": the bar
+        animates instead of showing a fake 0%.
+        """
+        if total <= 0 or done <= 0:
+            self.set_indeterminate()
+            return
+        if str(self.progress.cget("mode")) != "determinate":
+            self.progress.stop()
+            self.progress.configure(mode="determinate")
+        self.progress.configure(value=max(0, min(100, int(done * 100 / total))))
 
     def reset(self) -> None:
-        self.progress.configure(value=0)
+        """Stop any animation and return the bar to its empty resting state."""
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=0)
 
 
 def make_tree(parent: tk.Misc, columns: list[tuple[str, str, int]], *, height: int = 12) -> ttk.Treeview:

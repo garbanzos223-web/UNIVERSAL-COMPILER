@@ -27,11 +27,20 @@ COLORS = {
     "border": "#2b303a",    # hairlines
     "fg": "#e8eaed",
     "muted": "#9aa4b2",
+    # "accent" is the LIGHT blue: text/icons on dark surfaces (>=4.5:1 there).
     "accent": "#4f8cff",
     "accent_active": "#74a6ff",
+    # "accent_fill" is the DARK blue: filled surfaces that carry WHITE text
+    # (buttons, chips, busy badge) and must stay >=4.5:1 with white (WCAG AA).
+    "accent_fill": "#2667d8",
+    "accent_fill_active": "#2b6ade",
     "ok": "#3fb950",
     "warn": "#d29922",
     "err": "#f85149",
+    # Dark text for filled badges (white on ok/warn/err fails WCAG AA).
+    "on_ok": "#0b1a10",
+    "on_warn": "#2a1d04",
+    "on_err": "#2a0908",
     "selection": "#2b4a80",
     "console": "#0c0e12",   # recessed log area
 }
@@ -100,10 +109,53 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
     # Version chip in the header.
     style.configure(
         "Chip.TLabel",
-        background=COLORS["accent"],
+        background=COLORS["accent_fill"],
         foreground="#ffffff",
         font=FONTS["chip"],
         padding=(7, 2),
+    )
+    # --- state pill in the header (one style per UiState; see state.py) ----
+    style.configure(
+        "StateIdle.TLabel",
+        background=COLORS["header"],
+        foreground=COLORS["muted"],
+        font=FONTS["chip"],
+        padding=(9, 3),
+    )
+    style.configure(
+        "StateScan.TLabel",
+        background=COLORS["header"],
+        foreground=COLORS["accent"],
+        font=FONTS["bold"],
+        padding=(9, 3),
+    )
+    style.configure(
+        "StateBusy.TLabel",
+        background=COLORS["accent_fill"],
+        foreground="#ffffff",
+        font=FONTS["bold"],
+        padding=(9, 3),
+    )
+    style.configure(
+        "StateOk.TLabel",
+        background=COLORS["ok"],
+        foreground=COLORS["on_ok"],
+        font=FONTS["bold"],
+        padding=(9, 3),
+    )
+    style.configure(
+        "StateErr.TLabel",
+        background=COLORS["err"],
+        foreground=COLORS["on_err"],
+        font=FONTS["bold"],
+        padding=(9, 3),
+    )
+    style.configure(
+        "StateWarn.TLabel",
+        background=COLORS["warn"],
+        foreground=COLORS["on_warn"],
+        font=FONTS["bold"],
+        padding=(9, 3),
     )
     # Pill badge for the detected-technology value.
     style.configure(
@@ -125,12 +177,15 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
     style.configure("Section.Card.TLabel", background=COLORS["bg"], foreground=COLORS["accent"], font=FONTS["section"])
 
     # --- buttons -----------------------------------------------------------
+    # focusthickness/focuscolor make keyboard focus visible (WCAG 2.4.7);
+    # the theme shipped with focusthickness=0, i.e. no focus indicator at all.
     style.configure(
         "TButton",
         background=COLORS["panel_alt"],
         foreground=COLORS["fg"],
         borderwidth=0,
-        focusthickness=0,
+        focusthickness=2,
+        focuscolor=COLORS["accent"],
         padding=(14, 7),
     )
     style.map(
@@ -140,14 +195,19 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
     )
     style.configure(
         "Accent.TButton",
-        background=COLORS["accent"],
+        background=COLORS["accent_fill"],
         foreground="#ffffff",
         font=FONTS["bold"],
+        focusthickness=2,
+        focuscolor=COLORS["accent"],
         padding=(20, 9),
     )
     style.map(
         "Accent.TButton",
-        background=[("active", COLORS["accent_active"]), ("disabled", COLORS["panel_alt"])],
+        background=[
+            ("active", COLORS["accent_fill_active"]),
+            ("disabled", COLORS["panel_alt"]),
+        ],
         foreground=[("disabled", COLORS["muted"])],
     )
     # Bare text button for title bars (header/dialog headers).
@@ -156,7 +216,8 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
         background=COLORS["header"],
         foreground=COLORS["muted"],
         borderwidth=0,
-        focusthickness=0,
+        focusthickness=2,
+        focuscolor=COLORS["accent"],
         padding=(10, 5),
     )
     style.map(
@@ -285,7 +346,7 @@ def style_menu(menu: tk.Menu) -> tk.Menu:
     menu.configure(
         background=COLORS["panel"],
         foreground=COLORS["fg"],
-        activebackground=COLORS["accent"],
+        activebackground=COLORS["accent_fill"],
         activeforeground="#ffffff",
         disabledforeground=COLORS["muted"],
         borderwidth=0,
@@ -309,8 +370,101 @@ def configure_text_widget(widget: tk.Text) -> None:
     )
 
 
+def _apply_dark_titlebar(window: tk.Misc) -> bool:
+    """Set DWMWA_USE_IMMERSIVE_DARK_MODE on the window's visible frame.
+
+    Returns True only when a dark frame was requested *and* the compositor
+    actually painted one. Some Windows 10 sessions (light theme, or a custom
+    theme whose metrics disagree with the registry) cannot render a dark
+    caption: the attribute call succeeds but the caption comes out blank
+    WHITE, which looks worse than the standard title bar. That case is
+    detected by sampling the composited caption on screen and the attribute
+    is reverted, leaving the system's normal themed title bar.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        dwmapi = ctypes.windll.dwmapi
+        get_parent = user32.GetParent
+        get_parent.argtypes = (wintypes.HWND,)
+        get_parent.restype = wintypes.HWND
+        set_attr = dwmapi.DwmSetWindowAttribute
+        set_attr.argtypes = (wintypes.HWND, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)
+        set_attr.restype = ctypes.c_int
+
+        raw = window.winfo_id()
+        # HWND selection is empirical: before the first map, winfo_id() *is*
+        # the top-level window (parent NULL); Tk then re-parents it under a
+        # frame that only exists after mapping, so afterwards the parent is
+        # the visible window. Both candidates are tried so the attribute
+        # always lands on the frame that draws the title bar.
+        target = None
+        value = ctypes.c_int(1)  # DWMWA_USE_IMMERSIVE_DARK_MODE = on
+        for hwnd in (get_parent(raw), raw):
+            if not hwnd:
+                continue
+            for attribute in (20, 19):  # 20: Win10 2004+/11, 19: older Win10
+                if set_attr(hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                    target = hwnd
+                    break
+            if target is not None:
+                break
+        if target is None:
+            return False
+        if not user32.IsWindowVisible(target):
+            # Not mapped yet: nothing is painted, so verification would read
+            # the desktop behind it. The delayed re-apply verifies instead.
+            return True
+        try:
+            dwmapi.DwmFlush()  # wait until the frame is actually composited
+        except (AttributeError, OSError):  # pragma: no cover - very old OS
+            pass
+        frame = wintypes.RECT()
+        user32.GetWindowRect(target, ctypes.byref(frame))
+        hdc = user32.GetDC(0)  # the composed screen, not the window bitmap
+        if not hdc:
+            return True  # pragma: no cover - cannot sample; keep the request
+        try:
+            color = ctypes.windll.gdi32.GetPixel(hdc, frame.left + 80, frame.top + 16)
+        finally:
+            user32.ReleaseDC(0, hdc)
+        if color == 0xFFFFFF:
+            # Blank white caption: this session cannot render dark. Revert.
+            value = ctypes.c_int(0)
+            for attribute in (20, 19):
+                if set_attr(target, attribute, ctypes.byref(value), ctypes.sizeof(value)) == 0:
+                    break
+            return False
+        return True
+    except (AttributeError, OSError, tk.TclError, ValueError):  # pragma: no cover
+        return False
+
+
+def enable_dark_titlebar(window: tk.Misc) -> None:
+    """Ask DWM for a dark title bar on Windows 10/11; never raise.
+
+    DwmSetWindowAttribute is called through ctypes with explicit signatures
+    (a bare call would truncate the 64-bit HWND through the default C int).
+    On failure the window simply keeps the standard title bar.
+
+    The call runs twice: once now (for already-mapped windows such as
+    dialogs) and again after the first map, because Tk creates a *new* frame
+    window when a not-yet-mapped window is first shown — applying the
+    attribute only before mapping would target a window that ends up as a
+    child, leaving the visible title bar light.
+    """
+    _apply_dark_titlebar(window)
+    try:
+        window.after(80, lambda: _apply_dark_titlebar(window))
+    except tk.TclError:  # pragma: no cover - window already gone
+        pass
+
+
 def configure_root_window(root: tk.Tk) -> None:
     root.title("ECE Universal AutoCompiler")
     root.geometry("1120x760")
     root.minsize(920, 600)
     root.configure(background=COLORS["bg"])
+    enable_dark_titlebar(root)
