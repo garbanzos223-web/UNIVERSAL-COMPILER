@@ -81,14 +81,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools.add_argument("--json", action="store_true", help="Emit JSON.")
 
     p_exe = sub.add_parser(
-        "exe", help="Bundle a Python project into a standalone .exe (requires PyInstaller)."
+        "exe", help="Detect a project's language and compile it into a standalone .exe."
     )
     p_exe.add_argument("path", help="Project directory or a single .py file.")
     p_exe.add_argument("-o", "--output", help="Output .exe path (default: <name>.exe in output dir).")
     p_exe.add_argument("--name", help="Executable name (default: project folder name).")
-    p_exe.add_argument("--entry", help="Entry-point .py (default: auto-detect main.py/app.py/...).")
-    p_exe.add_argument("--onedir", action="store_true", help="Folder mode instead of a single file.")
-    p_exe.add_argument("--console", action="store_true", help="Attach a console (default: windowed).")
+    p_exe.add_argument("--entry", help="Entry-point .py for Python projects (default: auto-detect).")
+    p_exe.add_argument("--onedir", action="store_true", help="Folder mode instead of a single file (Python).")
+    p_exe.add_argument("--console", action="store_true", help="Attach a console (default: windowed for Python).")
     p_exe.add_argument("--timeout", type=int, default=1800, help="Build timeout in seconds.")
 
     sub.add_parser("gui", help="Launch the desktop interface.")
@@ -332,7 +332,7 @@ def cmd_exe(args) -> int:
         _print(f"error: path does not exist: {root}")
         return EXIT_ERROR
 
-    from .build.exe_exporter import export_exe
+    from .build.exe_exporter import compile_exe
 
     cfg = AppConfig()
     cfg.ensure_directories()
@@ -341,7 +341,7 @@ def cmd_exe(args) -> int:
         if total:
             _print(f"[{done:>3}/{total}] {message}")
 
-    result = export_exe(
+    result = compile_exe(
         root,
         output=args.output,
         name=args.name,
@@ -363,6 +363,8 @@ def cmd_exe(args) -> int:
 
     _print(f"Executable created in {result.duration_seconds:.1f}s.")
     _print(f"  .exe : {result.exe_path}")
+    if result.language:
+        _print(f"  lang : {result.language}")
     size = result.exe_path.stat().st_size
     _print(f"  size : {size:,} bytes")
     for note in result.notes:

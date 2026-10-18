@@ -18,8 +18,10 @@ from pathlib import Path
 
 from ..adapters.base import BuildPlanStep
 from ..config import AppConfig
+from ..detection import scan
+from ..detection.toolchains import get_tool
 from ..logging_config import get_logger
-from .process import run_command
+from .process import run_command, RunResult
 
 log = get_logger("build.exe")
 
@@ -44,6 +46,9 @@ class ExeExportResult:
     log_path: Path | None = None
     errors: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Language / adapter that produced (or would produce) the executable.
+    language: str | None = None
+    adapter_id: str | None = None
 
 
 def pyinstaller_available() -> tuple[bool, str]:
@@ -191,6 +196,8 @@ def export_exe(
             duration_seconds=run.duration_seconds,
             log_path=log_path,
             notes=notes,
+            language="python",
+            adapter_id="python",
         )
 
     errors = list(run.errors) or ["PyInstaller failed to produce an executable."]
@@ -204,4 +211,250 @@ def export_exe(
         duration_seconds=run.duration_seconds,
         log_path=log_path,
         errors=errors,
+    )
+
+
+# --- Multi-language executable compilation ---------------------------------
+#
+# ``compile_exe`` scans a project, detects its language, and builds a native
+# executable with that language's own toolchain. It never fakes success: before
+# running anything it checks the required tools and, if one is missing, returns
+# an honest failure with an install hint.
+
+# Tools each compiled language needs to produce a Windows executable.
+_NATIVE_TOOLS: dict[str, tuple[str, ...]] = {
+    "dotnet": ("dotnet",),
+    "rust-cargo": ("cargo",),
+    "go": ("go",),
+    "cpp-cmake": ("cmake",),
+    "cpp-make": ("make",),
+}
+
+_INSTALL_HINTS: dict[str, str] = {
+    "dotnet": "Install the .NET SDK (https://dotnet.microsoft.com/download).",
+    "rust-cargo": "Install Rust (https://rustup.rs).",
+    "go": "Install Go (https://go.dev/dl/).",
+    "cpp-cmake": "Install CMake and a C++ compiler (Visual Studio Build Tools).",
+    "cpp-make": "Install Make and a C/C++ compiler (MinGW or Visual Studio Build Tools).",
+    "node": "Install Node.js (https://nodejs.org/).",
+}
+
+
+def _missing_tools(tool_ids: tuple[str, ...]) -> list[str]:
+    missing = []
+    for tid in tool_ids:
+        tool = get_tool(tid)
+        if tool is None or not tool.found:
+            missing.append(tid)
+    return missing
+
+
+def _find_cpp_compiler() -> str | None:
+    """Return a C/C++ compiler executable name, or None if none is installed."""
+    for cand in ("cl", "g++", "clang++", "gcc", "clang", "cc"):
+        tool = get_tool(cand)
+        if tool is not None and tool.found:
+            return tool.path or cand
+    return None
+
+
+def _first_exe(directory: Path, prefer: str | None = None) -> Path | None:
+    """Find the most likely executable under *directory*."""
+    if not directory or not directory.is_dir():
+        return None
+    exes = [p for p in directory.rglob("*.exe") if p.is_file()]
+    if not exes:
+        # Some toolchains emit an extension-less binary; skip those for a
+        # Windows .exe export.
+        return None
+    if prefer:
+        for p in exes:
+            if p.stem.lower() == prefer.lower():
+                return p
+    # Prefer the largest executable (the main binary, not helpers).
+    return max(exes, key=lambda p: p.stat().st_size)
+
+
+def _run_steps(steps, workdir, *, timeout, progress, cancel, config) -> RunResult:
+    log_path = config.work_dir / "logs" / f"exe_{int(time.time())}.log"
+    return run_command(
+        steps=steps, workdir=workdir, progress=progress, cancel=cancel,
+        log_path=log_path, config=config,
+    )
+
+
+def compile_exe(
+    project: Path | str,
+    *,
+    output: Path | str | None = None,
+    name: str | None = None,
+    entry: Path | str | None = None,
+    onefile: bool = True,
+    console: bool = False,
+    timeout: int = 1800,
+    progress=None,
+    cancel=None,
+    config: AppConfig | None = None,
+) -> ExeExportResult:
+    """Detect a project's language and compile it into a Windows executable."""
+    cfg = config or AppConfig()
+    cfg.ensure_directories()
+    project = Path(project).resolve()
+    if not project.exists():
+        return ExeExportResult(
+            ok=False, exe_path=None, message=f"Project path does not exist: {project}"
+        )
+
+    # 1. Detect the language.
+    try:
+        result = scan(project)
+    except Exception as exc:  # noqa: BLE001 - surface as an honest failure
+        return ExeExportResult(ok=False, exe_path=None, message=f"Detection failed: {exc}")
+    best = result.best
+    if best is None:
+        return ExeExportResult(
+            ok=False, exe_path=None,
+            message="No supported project was detected in this directory.",
+        )
+
+    adapter_id = best.adapter_id
+    label = best.project_type
+    exe_name = name or project.name or "application"
+
+    # 2. Route to the right builder.
+    if adapter_id == "python":
+        res = export_exe(
+            project, output=output, name=name, entry=entry, onefile=onefile,
+            console=console, timeout=timeout, progress=progress, cancel=cancel,
+            config=cfg,
+        )
+        res.language = label
+        return res
+
+    if adapter_id == "node":
+        return ExeExportResult(
+            ok=False, exe_path=None, language=label, adapter_id=adapter_id,
+            message="Node.js .exe export is not supported yet (needs pkg/nexe). "
+                    "The .ece build still works.",
+            notes=["Detected Node.js. Use 'build' to package it as .ece."],
+        )
+
+    if adapter_id in ("unity", "unreal"):
+        return ExeExportResult(
+            ok=False, exe_path=None, language=label, adapter_id=adapter_id,
+            message=f"{label} projects are built inside their engine/editor, not here.",
+            notes=["This tool detects the project and reports the missing engine; it "
+                   "cannot produce an .exe by itself."],
+        )
+
+    if adapter_id not in _NATIVE_TOOLS:
+        return ExeExportResult(
+            ok=False, exe_path=None, language=label, adapter_id=adapter_id,
+            message=f"No .exe build strategy for '{label}' yet.",
+        )
+
+    # 3. Check the required tools before running anything.
+    required = _NATIVE_TOOLS[adapter_id]
+    missing = _missing_tools(required)
+    cpp_compiler = None
+    if adapter_id in ("cpp-cmake", "cpp-make"):
+        cpp_compiler = _find_cpp_compiler()
+        if cpp_compiler is None:
+            missing.append("c++ compiler")
+    if missing:
+        hints = [_INSTALL_HINTS.get(m, f"Install '{m}'.") for m in missing]
+        return ExeExportResult(
+            ok=False, exe_path=None, language=label, adapter_id=adapter_id,
+            message=f"Cannot build a {label} .exe: missing {', '.join(missing)}.",
+            errors=hints,
+            notes=["Toolchain detected honestly; nothing was built."],
+        )
+
+    out_path = Path(output) if output else (cfg.output_dir / f"{exe_name}.exe")
+    return _compile_native(
+        adapter_id, label, project, out_path, exe_name, cpp_compiler,
+        timeout=timeout, progress=progress, cancel=cancel, config=cfg,
+    )
+
+
+def _compile_native(
+    adapter_id, label, project, out_path, exe_name, cpp_compiler,
+    *, timeout, progress, cancel, config,
+) -> ExeExportResult:
+    """Build a native executable for a compiled language and locate the result."""
+    import time as _time
+
+    work = config.work_dir / f"exe_{int(_time.time())}"
+    work.mkdir(parents=True, exist_ok=True)
+    steps: list[BuildPlanStep] = []
+
+    def _add(sid, title, argv, wd=None):
+        steps.append(BuildPlanStep(
+            id=sid, title=title, cmd_args=argv, workdir=wd or project,
+            timeout=timeout, requires_approval=False,
+        ))
+
+    exe_dir = out_path.parent
+    prefer = out_path.stem
+
+    if adapter_id == "dotnet":
+        publish = work / "publish"
+        _add("dotnet-publish", "dotnet publish (Release, win-x64, self-contained)",
+             [get_tool("dotnet").path or "dotnet", "publish", str(project),
+              "-c", "Release", "-r", "win-x64", "--self-contained", "true",
+              "-o", str(publish)])
+        target_dir = publish
+    elif adapter_id == "rust-cargo":
+        _add("cargo-build", "cargo build --release",
+             [get_tool("cargo").path or "cargo", "build", "--release",
+              "--manifest-path", str(project / "Cargo.toml")])
+        target_dir = project / "target" / "release"
+    elif adapter_id == "go":
+        _add("go-build", "go build",
+             [get_tool("go").path or "go", "build", "-o", str(out_path), "."])
+        target_dir = out_path.parent
+    elif adapter_id == "cpp-cmake":
+        build_dir = work / "cmake-build"
+        _add("cmake-configure", "cmake configure",
+             [get_tool("cmake").path or "cmake", "-S", str(project), "-B", str(build_dir)])
+        _add("cmake-build", "cmake --build (Release)",
+             [get_tool("cmake").path or "cmake", "--build", str(build_dir), "--config", "Release"])
+        target_dir = build_dir
+    elif adapter_id == "cpp-make":
+        _add("make-build", "make (Release)",
+             [get_tool("make").path or "make", "RELEASE=1"], wd=project)
+        target_dir = project
+    else:  # pragma: no cover - guarded by _NATIVE_TOOLS
+        return ExeExportResult(ok=False, exe_path=None, language=label,
+                               adapter_id=adapter_id, message="Unsupported strategy.")
+
+    if progress:
+        progress(f"Compiling {label} into an executable", 0, 100)
+    run = _run_steps(steps, project, timeout=timeout, progress=progress,
+                     cancel=cancel, config=config)
+
+    produced = None
+    if adapter_id == "go" and out_path.is_file():
+        produced = out_path
+    else:
+        produced = _first_exe(target_dir, prefer)
+
+    if run.ok and produced is not None and produced.is_file():
+        exe_dir.mkdir(parents=True, exist_ok=True)
+        if produced.resolve() != out_path.resolve():
+            shutil.copy2(str(produced), str(out_path))
+        shutil.rmtree(work, ignore_errors=True)
+        return ExeExportResult(
+            ok=True, exe_path=out_path, message="Executable created",
+            exit_code=run.exit_code, duration_seconds=run.duration_seconds,
+            language=label, adapter_id=adapter_id,
+            notes=[f"Built with the native {label} toolchain."],
+        )
+
+    shutil.rmtree(work, ignore_errors=True)
+    return ExeExportResult(
+        ok=False, exe_path=None, message=f"{label} .exe build failed.",
+        exit_code=run.exit_code, duration_seconds=run.duration_seconds,
+        language=label, adapter_id=adapter_id,
+        errors=list(run.errors) or [f"The {label} toolchain did not produce an executable."],
     )

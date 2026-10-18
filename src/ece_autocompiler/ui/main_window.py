@@ -100,7 +100,7 @@ class MainWindow(ttk.Frame):
             command=self._on_mode_changed,
         ).grid(row=0, column=1, sticky="w")
         ttk.Radiobutton(
-            mode_row, text="Build .exe (Python)", variable=self.mode_var, value="exe",
+            mode_row, text="Build .exe", variable=self.mode_var, value="exe",
             command=self._on_mode_changed,
         ).grid(row=0, column=2, sticky="w", padx=(16, 0))
         self.exe_hint = ttk.Label(mode_row, text="", style="Muted.TLabel")
@@ -199,7 +199,7 @@ class MainWindow(ttk.Frame):
         is_exe = self.mode_var.get() == "exe"
         self.output_label_var.set("Output .exe" if is_exe else "Output .ece")
         self.exe_hint.configure(
-            text="Python only" if is_exe else ""
+            text="detects the language" if is_exe else ""
         )
         # Swap the option group and refresh the default extension.
         self.ece_opts.grid_forget()
@@ -335,10 +335,10 @@ class MainWindow(ttk.Frame):
         self.ctx.runner.run(work, self._build_done, lambda e: self._fail("Build failed", e))
 
     def _build_exe(self, project: Path, output: Path, progress) -> None:
-        from ..build.exe_exporter import export_exe
+        from ..build.exe_exporter import compile_exe
 
         def work():
-            return export_exe(
+            return compile_exe(
                 project,
                 output=output,
                 onefile=self.onefile_var.get(),

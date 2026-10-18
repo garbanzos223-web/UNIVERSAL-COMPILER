@@ -111,22 +111,25 @@ python -m ece_autocompiler tools
 
 ## Turn code into an `.exe`
 
-For **Python** projects the `exe` command bundles your code — and the Python
-interpreter — into a single Windows executable with PyInstaller:
+The `exe` command **scans your project, detects the language, and compiles it
+with that language's own toolchain** into a Windows executable:
 
 ```powershell
-python -m ece_autocompiler exe path\to\python-project -o out\app.exe --name app
-# auto-detects main.py / app.py / __main__.py; add --console for a terminal app
+python -m ece_autocompiler exe path\to\project -o out\app.exe --name app
 ```
 
-- Options: `--entry` (explicit entry file), `--onedir` (folder instead of one
-  file), `--console` (attach a terminal), `--name`, `--timeout`.
-- Requires `pip install pyinstaller` (already available in the development
-  environment).
-- Other languages (C#, C++, Rust, Go, Unity, Unreal) need their own compiler or
-  SDK. Those adapters **detect** the project and report the missing tool; they
-  do not fabricate an `.exe`. See
-  [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
+| Detected language | How the `.exe` is made |
+| --- | --- |
+| **Python** | PyInstaller bundles the entry point + interpreter into one `.exe` (**verified**). |
+| **C# / .NET** | `dotnet publish -c Release -r win-x64 --self-contained`. |
+| **Rust** | `cargo build --release` → `target/release/*.exe`. |
+| **Go** | `go build -o app.exe`. |
+| **C/C++ (CMake/Make)** | CMake/Make build → locates the produced `.exe`. |
+| Node.js / Unity / Unreal | Detected and reported; these need a bundler or their engine (not faked). |
+
+If the required compiler is missing, the tool **says so** with an install hint
+instead of pretending to build. Options: `--entry`, `--onedir`, `--console`,
+`--name`, `--timeout`. See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
 
 ## Tests
 
