@@ -30,6 +30,26 @@ Legend:
 | Unity | `Assets/` **and** `ProjectSettings/` directories | `unity` | Unity editor | Tool-gated — no automatic CLI build; detected and reported |
 | Unreal Engine | `*.uproject` | `unreal` | Unreal engine | Tool-gated — no automatic CLI build; detected and reported |
 
+## Executable (`.exe`) export
+
+The `exe` command (and the GUI's **Build .exe** mode) turns a project into a
+Windows executable:
+
+| Technology | `.exe` export | How |
+| --- | --- | --- |
+| Python | **Supported (verified)** | PyInstaller bundles the entry point + interpreter into a single `.exe`. |
+| Node.js | Not yet | Would need a bundler such as `pkg`/`nexe`; detection and the `.ece` build still work. |
+| C#, C++, Rust, Go, Java | Tool-gated | These produce native executables with their **own** compiler (`dotnet`, `cargo`, `go build`, ...). The adapter runs it only when the toolchain is installed. |
+| Unity, Unreal | Not supported here | Games are built inside their engine/editor; this tool detects them and reports the missing engine rather than faking an `.exe`. |
+
+## Package-manager detection
+
+For Node and Python projects the detector reads lock files to report which
+package manager is in use, and the build honors it:
+
+- **Node:** `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb`/`bun.lock` → bun, otherwise npm.
+- **Python:** `poetry.lock` → poetry, `uv.lock` → uv, `pdm.lock` → pdm, otherwise pip.
+
 ## Tool discovery
 
 `detection/toolchains.py` probes for: `python`, `node`, `npm`, `dotnet`,

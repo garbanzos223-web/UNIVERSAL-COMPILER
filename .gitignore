@@ -3,9 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Distribution / packaging
-build/
-dist/
+# Distribution / packaging  (anchored to the repo root so they do NOT shadow
+# source packages such as src/ece_autocompiler/build/)
+/build/
+/dist/
 *.egg-info/
 *.egg
 .eggs/

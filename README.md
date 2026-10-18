@@ -85,11 +85,12 @@ python -m ece_autocompiler gui
 A single, simple window:
 
 1. **Project folder** — pick the folder (type auto-detected, shown as *Detected*).
-2. **Output `.ece`** — where to save the container (auto-filled).
-3. **Compile** — runs the build and packages the result; watch progress in the log.
+2. **Output** — choose **Package as `.ece`** or **Build `.exe`** (Python); the
+   output path and options adapt to the mode.
+3. **Compile** — runs the build / export and shows progress in the log.
 
-Options: **compression** (zlib / lzma / store), **Allow project scripts** (consent),
-**Overwrite output**, **Skip dependency install**.
+Options per mode — `.ece`: compression, skip install. `.exe`: console window,
+single file. Shared: allow project scripts (consent), overwrite output.
 
 Menus: **File** (open output/work folder), **Tools** (Toolchains…, Build history…),
 **Help** (About).
@@ -99,6 +100,7 @@ Menus: **File** (open output/work folder), **Tools** (Toolchains…, Build histo
 ```powershell
 python -m ece_autocompiler analyze  path\to\project
 python -m ece_autocompiler build    path\to\project -o out\project.ece --consent
+python -m ece_autocompiler exe      path\to\project -o out\app.exe --name app
 python -m ece_autocompiler validate out\project.ece --deep
 python -m ece_autocompiler inspect  out\project.ece
 python -m ece_autocompiler extract  out\project.ece out\unpacked --overwrite
@@ -106,6 +108,25 @@ python -m ece_autocompiler tools
 ```
 
 `build` refuses to run project scripts unless `--consent` is passed.
+
+## Turn code into an `.exe`
+
+For **Python** projects the `exe` command bundles your code — and the Python
+interpreter — into a single Windows executable with PyInstaller:
+
+```powershell
+python -m ece_autocompiler exe path\to\python-project -o out\app.exe --name app
+# auto-detects main.py / app.py / __main__.py; add --console for a terminal app
+```
+
+- Options: `--entry` (explicit entry file), `--onedir` (folder instead of one
+  file), `--console` (attach a terminal), `--name`, `--timeout`.
+- Requires `pip install pyinstaller` (already available in the development
+  environment).
+- Other languages (C#, C++, Rust, Go, Unity, Unreal) need their own compiler or
+  SDK. Those adapters **detect** the project and report the missing tool; they
+  do not fabricate an `.exe`. See
+  [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
 
 ## Tests
 

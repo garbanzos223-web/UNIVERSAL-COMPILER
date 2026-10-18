@@ -16,8 +16,11 @@ from ..config import Limits
 from ..errors import DetectionError
 from ..logging_config import get_logger
 from .markers import (
+    DEFAULT_PACKAGE_MANAGERS,
     IGNORED_DIRECTORIES,
     MARKERS,
+    NODE_LOCKFILES,
+    PYTHON_LOCKFILES,
     SOURCE_HINTS,
     STRONG,
     WEAK,
@@ -64,11 +67,13 @@ class ScanResult:
     def summary(self) -> str:
         if not self.candidates:
             return "No supported project type was detected."
-        parts = [
-            f"{ADAPTER_LABELS.get(c.adapter_id, c.adapter_id)} "
-            f"({int(c.confidence * 100)}%{', at ' + (c.root or '.') if c.root else ''})"
-            for c in self.candidates[:4]
-        ]
+        parts = []
+        for c in self.candidates[:4]:
+            label = ADAPTER_LABELS.get(c.adapter_id, c.adapter_id)
+            piece = f"{label} ({int(c.confidence * 100)}%{', at ' + (c.root or '.') if c.root else ''})"
+            if c.package_manager:
+                piece += f" via {c.package_manager}"
+            parts.append(piece)
         text = "Detected: " + "; ".join(parts)
         if self.ambiguous:
             text += " - more than one project found, choose one."
@@ -149,6 +154,17 @@ def _detect_unity(root: Path, directory: str, directory_set: set[str]) -> bool:
     return assets in directory_set and settings in directory_set
 
 
+def _package_manager_for(adapter_id: str, names_present: set[str]) -> str | None:
+    """Pick the package manager for a candidate from its lock files."""
+    table = NODE_LOCKFILES if adapter_id == "node" else PYTHON_LOCKFILES if adapter_id == "python" else None
+    if table is None:
+        return None
+    for lock, manager in table.items():
+        if lock in names_present:
+            return manager
+    return DEFAULT_PACKAGE_MANAGERS.get(adapter_id)
+
+
 def scan(
     root: Path | str,
     *,
@@ -215,6 +231,7 @@ def scan(
     # Manifest / marker detections.
     for directory, dir_files in by_dir.items():
         matches = _match_markers(dir_files)
+        names_present = {os.path.basename(f).lower() for f in dir_files}
         for marker, evidence in matches:
             key = (marker.adapter_id, directory)
             evidence_path = f"{directory}/{evidence}" if directory else evidence
@@ -226,6 +243,7 @@ def scan(
                     root=directory,
                     confidence=marker.confidence,
                     evidence=[evidence_path],
+                    package_manager=_package_manager_for(marker.adapter_id, names_present),
                 )
             else:
                 existing.evidence.append(evidence_path)
@@ -306,5 +324,8 @@ def _detect_by_sources(root: Path, by_dir: dict[str, list[str]]) -> dict[tuple[s
             confidence=confidence,
             evidence=[f"{counts[language]} source file(s)"],
             notes="No build manifest found; detected from source files only.",
+            package_manager=_package_manager_for(
+                adapter, {os.path.basename(f).lower() for f in dir_files}
+            ),
         )
     return found

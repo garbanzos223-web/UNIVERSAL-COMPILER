@@ -84,7 +84,40 @@ MARKERS: tuple[Marker, ...] = (
     # --- Game engines ---
     Marker("unreal", "unreal", STRONG, suffixes=(".uproject",), description="Unreal Engine project"),
     # Unity is detected by directory shape, handled separately in the detector.
+
+    # --- Lock files (corroborate the manifest and reveal the package manager).
+    Marker("node", "node", MEDIUM, names=("yarn.lock",), description="Yarn lock file"),
+    Marker("node", "node", MEDIUM, names=("pnpm-lock.yaml",), description="pnpm lock file"),
+    Marker("node", "node", MEDIUM, names=("bun.lockb", "bun.lock"), description="Bun lock file"),
+    Marker("node", "node", WEAK, names=("package-lock.json",), description="npm lock file"),
+    Marker("python", "python", MEDIUM, names=("poetry.lock",), description="Poetry lock file"),
+    Marker("python", "python", MEDIUM, names=("uv.lock",), description="uv lock file"),
+    Marker("python", "python", MEDIUM, names=("pdm.lock",), description="PDM lock file"),
 )
+
+# Map a detected lock file to the package manager that produced it. Used both to
+# label a candidate and to choose the right install/build commands.
+NODE_LOCKFILES: dict[str, str] = {
+    "yarn.lock": "yarn",
+    "pnpm-lock.yaml": "pnpm",
+    "bun.lockb": "bun",
+    "bun.lock": "bun",
+    "package-lock.json": "npm",
+    "npm-shrinkwrap.json": "npm",
+}
+
+PYTHON_LOCKFILES: dict[str, str] = {
+    "poetry.lock": "poetry",
+    "uv.lock": "uv",
+    "pdm.lock": "pdm",
+    "requirements.lock": "pip",
+}
+
+# Fallback package manager per adapter when no lock file is present.
+DEFAULT_PACKAGE_MANAGERS: dict[str, str] = {
+    "node": "npm",
+    "python": "pip",
+}
 
 # Suffix-only hints for source files, used to raise confidence and to classify
 # projects that ship no manifest at all.
@@ -153,3 +186,6 @@ class DetectionCandidate:
     confidence: float
     evidence: list[str] = field(default_factory=list)
     notes: str = ""
+    # Detected package manager for this candidate (e.g. "yarn", "pnpm",
+    # "poetry"). ``None`` when not applicable or not determined.
+    package_manager: str | None = None

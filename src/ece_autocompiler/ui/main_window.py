@@ -90,31 +90,61 @@ class MainWindow(ttk.Frame):
         ttk.Label(detect, textvariable=self.detected_var).grid(row=0, column=1, sticky="w")
         ttk.Button(detect, text="Rescan", command=self._detect).grid(row=0, column=2, sticky="e")
 
+        # --- Output mode -----------------------------------------------------
+        mode_row = ttk.Frame(form)
+        mode_row.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        ttk.Label(mode_row, text="Output", width=14).grid(row=0, column=0, sticky="w")
+        self.mode_var = tk.StringVar(value="ece")
+        ttk.Radiobutton(
+            mode_row, text="Package as .ece", variable=self.mode_var, value="ece",
+            command=self._on_mode_changed,
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(
+            mode_row, text="Build .exe (Python)", variable=self.mode_var, value="exe",
+            command=self._on_mode_changed,
+        ).grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.exe_hint = ttk.Label(mode_row, text="", style="Muted.TLabel")
+        self.exe_hint.grid(row=0, column=3, sticky="w", padx=(12, 0))
+
         out = ttk.Frame(form)
-        out.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        out.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         out.columnconfigure(1, weight=1)
-        ttk.Label(out, text="Output .ece", width=14).grid(row=0, column=0, sticky="w")
+        self.output_label_var = tk.StringVar(value="Output .ece")
+        ttk.Label(out, textvariable=self.output_label_var, width=14).grid(row=0, column=0, sticky="w")
         self.output_var = tk.StringVar()
         ttk.Entry(out, textvariable=self.output_var).grid(row=0, column=1, sticky="ew")
         ttk.Button(out, text="Save as...", command=self._browse_output).grid(row=0, column=2, sticky="e", padx=(8, 0))
 
+        # --- Options (adapt to the selected mode) ---------------------------
         opts = ttk.Frame(form)
-        opts.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        self.compression_var = tk.StringVar(value="zlib")
-        ttk.Label(opts, text="Compression").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        ttk.Combobox(
-            opts, textvariable=self.compression_var, values=("zlib", "lzma", "store"),
-            state="readonly", width=8,
-        ).grid(row=0, column=1, sticky="w")
+        opts.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         self.consent_var = tk.BooleanVar(value=False)
         self.overwrite_var = tk.BooleanVar(value=False)
         self.skip_install_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opts, text="Allow project scripts (npm run build, etc.)", variable=self.consent_var).grid(row=0, column=2, sticky="w", padx=(16, 0))
-        ttk.Checkbutton(opts, text="Overwrite output", variable=self.overwrite_var).grid(row=0, column=3, sticky="w", padx=(12, 0))
-        ttk.Checkbutton(opts, text="Skip dependency install", variable=self.skip_install_var).grid(row=0, column=4, sticky="w", padx=(12, 0))
+
+        # .ece options
+        self.ece_opts = ttk.Frame(opts)
+        self.compression_var = tk.StringVar(value="zlib")
+        ttk.Label(self.ece_opts, text="Compression").grid(row=0, column=0, sticky="w", padx=(0, 6))
+        ttk.Combobox(
+            self.ece_opts, textvariable=self.compression_var, values=("zlib", "lzma", "store"),
+            state="readonly", width=8,
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(self.ece_opts, text="Skip dependency install", variable=self.skip_install_var).grid(row=0, column=2, sticky="w", padx=(12, 0))
+
+        # .exe options
+        self.exe_opts = ttk.Frame(opts)
+        self.console_var = tk.BooleanVar(value=False)
+        self.onefile_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self.exe_opts, text="Console window", variable=self.console_var).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(self.exe_opts, text="Single file", variable=self.onefile_var).grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        # shared options
+        ttk.Checkbutton(opts, text="Allow project scripts", variable=self.consent_var).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(opts, text="Overwrite output", variable=self.overwrite_var).grid(row=1, column=3, sticky="w")
 
         actions = ttk.Frame(form)
-        actions.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        actions.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         self.build_btn = ttk.Button(actions, text="Compile", style="Accent.TButton", command=self._build)
         self.build_btn.grid(row=0, column=0, sticky="w")
         self.cancel_btn = ttk.Button(actions, text="Cancel", command=self._cancel_build, state="disabled")
@@ -126,6 +156,7 @@ class MainWindow(ttk.Frame):
 
         ctx.status.pack(fill="x", side="bottom")
 
+        self._on_mode_changed()
         self.log.append("Select a project folder, then press Compile.", "muted")
 
     # ------------------------------------------------------------------ menu
@@ -161,13 +192,39 @@ class MainWindow(ttk.Frame):
         path = self.project_row.var.get().strip()
         if path and not self.output_var.get().strip():
             name = sanitize_filename(Path(path).name or "project")
-            self.output_var.set(str(self.ctx.config.output_dir / f"{name}.ece"))
+            ext = ".exe" if self.mode_var.get() == "exe" else ".ece"
+            self.output_var.set(str(self.ctx.config.output_dir / f"{name}{ext}"))
+
+    def _on_mode_changed(self) -> None:
+        is_exe = self.mode_var.get() == "exe"
+        self.output_label_var.set("Output .exe" if is_exe else "Output .ece")
+        self.exe_hint.configure(
+            text="Python only" if is_exe else ""
+        )
+        # Swap the option group and refresh the default extension.
+        self.ece_opts.grid_forget()
+        self.exe_opts.grid_forget()
+        (self.exe_opts if is_exe else self.ece_opts).grid(row=0, column=0, sticky="w")
+        # Rewrite a default-looking output path when it ends with the old ext.
+        path = self.project_row.var.get().strip()
+        out = self.output_var.get().strip()
+        if path and out:
+            old_ext = ".ece" if is_exe else ".exe"
+            new_ext = ".exe" if is_exe else ".ece"
+            if out.lower().endswith(old_ext):
+                self.output_var.set(out[: -len(old_ext)] + new_ext)
 
     def _browse_output(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title="Save container as", defaultextension=".ece",
-            filetypes=[("ECE container", "*.ece")],
-        )
+        if self.mode_var.get() == "exe":
+            path = filedialog.asksaveasfilename(
+                title="Save executable as", defaultextension=".exe",
+                filetypes=[("Windows executable", "*.exe")],
+            )
+        else:
+            path = filedialog.asksaveasfilename(
+                title="Save container as", defaultextension=".ece",
+                filetypes=[("ECE container", "*.ece")],
+            )
         if path:
             self.output_var.set(path)
 
@@ -195,6 +252,18 @@ class MainWindow(ttk.Frame):
             if labels:
                 self.detected_var.set("  ·  ".join(labels))
                 self.log.append(result.summary(), "ok")
+                best = result.best
+                if best:
+                    if best.package_manager:
+                        self.log.append(f"Package manager: {best.package_manager}", "info")
+                    if best.evidence:
+                        self.log.append(f"Evidence: {', '.join(best.evidence[:6])}", "muted")
+                    if best.adapter_id in ("unity", "unreal"):
+                        self.log.append(
+                            "Note: game-engine projects need their own editor/SDK to build; "
+                            "this tool detects them but cannot produce an .exe by itself.",
+                            "warn",
+                        )
             else:
                 self.detected_var.set("no supported project found")
                 self.log.append(result.summary(), "warn")
@@ -231,12 +300,6 @@ class MainWindow(ttk.Frame):
         self.log.append(f"Building {project}", "accent")
         self.ctx.status.set("Building...")
 
-        prefer = None
-        if len(self._candidates) == 1:
-            prefer = self._candidates[0].adapter_id
-        overrides = {"skip_npm_install": True} if self.skip_install_var.get() else {}
-        orchestrator = BuildOrchestrator(config=self.ctx.config)
-
         def progress(message: str, done: int, total: int) -> None:
             def apply():
                 self.ctx.status.set(message)
@@ -244,10 +307,22 @@ class MainWindow(ttk.Frame):
                 self.log.append(f"[{done:>3}/{total}] {message}", "muted")
             self.ctx.runner.post(apply)
 
+        if self.mode_var.get() == "exe":
+            self._build_exe(Path(project), Path(output), progress)
+        else:
+            self._build_ece(Path(project), Path(output), progress)
+
+    def _build_ece(self, project: Path, output: Path, progress) -> None:
+        prefer = None
+        if len(self._candidates) == 1:
+            prefer = self._candidates[0].adapter_id
+        overrides = {"skip_npm_install": True} if self.skip_install_var.get() else {}
+        orchestrator = BuildOrchestrator(config=self.ctx.config)
+
         def work():
             return orchestrator.build_and_package(
-                Path(project),
-                Path(output),
+                project,
+                output,
                 config_overrides=overrides,
                 consent_granted=self.consent_var.get(),
                 overwrite=self.overwrite_var.get(),
@@ -258,6 +333,51 @@ class MainWindow(ttk.Frame):
             )
 
         self.ctx.runner.run(work, self._build_done, lambda e: self._fail("Build failed", e))
+
+    def _build_exe(self, project: Path, output: Path, progress) -> None:
+        from ..build.exe_exporter import export_exe
+
+        def work():
+            return export_exe(
+                project,
+                output=output,
+                onefile=self.onefile_var.get(),
+                console=self.console_var.get(),
+                progress=progress,
+                cancel=self._cancel,
+                config=self.ctx.config,
+            )
+
+        self.ctx.runner.run(work, self._exe_done, lambda e: self._fail("Executable export failed", e))
+
+    def _exe_done(self, result) -> None:
+        self._finish_build()
+        if not result.ok:
+            self.log.append(f"Executable export failed: {result.message}", "err")
+            for err in result.errors[:8]:
+                self.log.append(f"  {err}", "err")
+            if result.log_path:
+                self.log.append(f"Log: {result.log_path}", "muted")
+            self.ctx.status.set("Executable export failed.")
+            return
+        self.log.append(f"Executable created in {result.duration_seconds:.1f}s", "ok")
+        self.log.append(f"  .exe: {result.exe_path}", "ok")
+        size = result.exe_path.stat().st_size
+        self.log.append(f"  size: {size:,} bytes", "ok")
+        for note in result.notes:
+            self.log.append(f"  {note}", "muted")
+        self.ctx.status.set("Done.")
+        build_history.append(
+            build_history.make_record(
+                Path(self.project_row.var.get()),
+                ok=True,
+                exit_code=result.exit_code,
+                duration_seconds=result.duration_seconds,
+                container_path=result.exe_path,
+                message="Executable export succeeded",
+            ),
+            base=self.ctx.config.work_dir,
+        )
 
     def _build_done(self, result) -> None:
         build_result, package = result

@@ -4,6 +4,7 @@ Subcommands mirror the GUI workflow so the tool is usable head-less and in CI:
 
     analyze   inspect a project and report detection + toolchains
     build     run a real build and package the result into an .ece container
+    exe       bundle a Python project into a standalone .exe (PyInstaller)
     validate  validate an existing container (optionally deep hash check)
     inspect   print a container's manifest and file index
     extract   safely extract a container
@@ -78,6 +79,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tools = sub.add_parser("tools", help="List detected toolchains.")
     p_tools.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    p_exe = sub.add_parser(
+        "exe", help="Bundle a Python project into a standalone .exe (requires PyInstaller)."
+    )
+    p_exe.add_argument("path", help="Project directory or a single .py file.")
+    p_exe.add_argument("-o", "--output", help="Output .exe path (default: <name>.exe in output dir).")
+    p_exe.add_argument("--name", help="Executable name (default: project folder name).")
+    p_exe.add_argument("--entry", help="Entry-point .py (default: auto-detect main.py/app.py/...).")
+    p_exe.add_argument("--onedir", action="store_true", help="Folder mode instead of a single file.")
+    p_exe.add_argument("--console", action="store_true", help="Attach a console (default: windowed).")
+    p_exe.add_argument("--timeout", type=int, default=1800, help="Build timeout in seconds.")
 
     sub.add_parser("gui", help="Launch the desktop interface.")
     return parser
@@ -314,6 +326,50 @@ def cmd_tools(args) -> int:
     return EXIT_OK
 
 
+def cmd_exe(args) -> int:
+    root = Path(args.path)
+    if not root.exists():
+        _print(f"error: path does not exist: {root}")
+        return EXIT_ERROR
+
+    from .build.exe_exporter import export_exe
+
+    cfg = AppConfig()
+    cfg.ensure_directories()
+
+    def progress(message: str, done: int, total: int) -> None:
+        if total:
+            _print(f"[{done:>3}/{total}] {message}")
+
+    result = export_exe(
+        root,
+        output=args.output,
+        name=args.name,
+        entry=args.entry,
+        onefile=not args.onedir,
+        console=args.console,
+        timeout=args.timeout,
+        progress=progress,
+        config=cfg,
+    )
+
+    if not result.ok:
+        _print(f"Executable export failed: {result.message}")
+        for err in result.errors[:8]:
+            _print(f"  {err}")
+        if result.log_path:
+            _print(f"Log: {result.log_path}")
+        return EXIT_ERROR
+
+    _print(f"Executable created in {result.duration_seconds:.1f}s.")
+    _print(f"  .exe : {result.exe_path}")
+    size = result.exe_path.stat().st_size
+    _print(f"  size : {size:,} bytes")
+    for note in result.notes:
+        _print(f"  note : {note}")
+    return EXIT_OK
+
+
 def cmd_gui(args) -> int:
     from .ui.main_window import run_app
 
@@ -330,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "analyze": cmd_analyze,
         "build": cmd_build,
+        "exe": cmd_exe,
         "validate": cmd_validate,
         "inspect": cmd_inspect,
         "extract": cmd_extract,
