@@ -2,8 +2,10 @@
 
 # ECE Universal AutoCompiler
 
-**Detect a project's technology, run its real build with the toolchain installed
-on your PC, and package the result into a secure, versioned `.ece` container.**
+**Windows-only build tool: detects a project's technology, runs its real build
+with the toolchain installed on your PC, packages the result into a secure,
+versioned `.ece` container — or exports the project to a standalone Windows
+`.exe`.**
 
 *From a desktop window or the command line — no third-party Python packages.*
 
@@ -13,10 +15,11 @@ on your PC, and package the result into a secure, versioned `.ece` container.**
 
 ---
 
-> **Status: 0.1.0 (alpha).** Python and Node.js builds run **for real**. Other
-> technologies are *detected* and their toolchains *reported*; a build only runs
-> when the required compiler is actually present. Nothing about a missing
-> toolchain is ever faked.
+> **Status: 0.1.0 (alpha), Windows 10/11 x64 only.** What runs **for real**:
+> Python and Node.js `.ece` builds, Python `.exe` export (PyInstaller), and —
+> when the toolchain is installed — native `.exe` builds for C#/.NET, Rust, Go
+> and C/C++. Everything else is *detected* and *reported* with an install hint;
+> nothing about a missing toolchain is ever faked.
 
 ---
 
@@ -68,8 +71,9 @@ executable once, then just open it, select a project folder and press
 
 ```powershell
 # One-time: build the executable (needs pyinstaller)
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
-# -> dist\ECE-AutoCompiler.exe
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1              # single file
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Mode onedir # folder
+# -> dist\ECE-AutoCompiler.exe   or   dist\ECE-AutoCompiler\ECE-AutoCompiler.exe
 ```
 
 Double-click `dist\ECE-AutoCompiler.exe` to launch the desktop window. The
@@ -97,8 +101,9 @@ A single window with a dark theme, laid out as cards:
   to it.
 * **Log** — colour-coded build output.
 
-Options per mode — `.ece`: compression, skip install. `.exe`: console window,
-single file. Shared: allow project scripts (consent), overwrite output.
+Options per mode — `.ece`: compression, skip install. `.exe`: single file or
+folder layout, console window. Shared: allow project scripts (consent),
+overwrite output.
 
 Menus: **File** (open output/work folder), **Tools** (Inspect / Extract `.ece`…,
 Toolchains…, Build history…), **Help** (About).
@@ -110,6 +115,7 @@ python -m ece_autocompiler analyze  path\to\project
 python -m ece_autocompiler build    path\to\project -o out\project.ece --consent
 python -m ece_autocompiler exe      path\to\project -o out\app.exe --name app
 python -m ece_autocompiler validate out\project.ece --deep
+python -m ece_autocompiler validate out\project.ece --verify-signature
 python -m ece_autocompiler inspect  out\project.ece
 python -m ece_autocompiler extract  out\project.ece out\unpacked --overwrite
 python -m ece_autocompiler tools
@@ -139,6 +145,24 @@ If the required compiler is missing, the tool **says so** with an install hint
 instead of pretending to build. Options: `--entry`, `--onedir`, `--console`,
 `--name`, `--timeout`. See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
 
+### `.exe` layout: `onefile` vs `onedir`
+
+The Python exporter and the app builder (`scripts\build_exe.ps1 -Mode ...`)
+offer both layouts; the GUI exposes them as *Single file* / *Folder*:
+
+| | onefile (single file) | onedir (folder) |
+| --- | --- | --- |
+| What you ship | One `.exe` | A folder with the `.exe` + its DLLs |
+| Startup | Slower (unpacks to a temp dir first) | Fast |
+| Antivirus false positives | More common | Less common |
+| Command | `exe ... ` (default) | `exe ... --onedir` |
+
+**Recommendation:** `onedir` for distribution (faster, fewer AV false
+positives), `onefile` for convenience. Both produce a **Windows x64**
+executable that runs without Python installed. Note that C#/.NET also honours
+the choice (`PublishSingleFile`), while Rust, Go and C/C++ toolchains already
+produce a single `.exe`, so the folder layout does not apply to them.
+
 ## Tests
 
 ```powershell
@@ -158,11 +182,13 @@ when a toolchain is missing.
 
 ## Requirements
 
-- Windows 10/11 (primary target) or any OS with Python 3.10–3.12.
+- **Windows 10/11 x64** — the only supported platform.
+- **To run from source:** Python 3.10–3.12 (development only). The built
+  `.exe` bundles the interpreter, so end users do **not** need Python.
 - **No third-party Python packages.** The standard library only. The GUI uses
-  Tkinter, which ships with CPython on Windows and macOS.
+  Tkinter, which ships with CPython on Windows.
 - Toolchains are optional and only needed for the languages you actually build
-  (e.g. Node.js + npm for Node projects).
+  (e.g. Node.js + npm for Node projects, PyInstaller for `.exe` export).
 
 ## Honest by design
 
@@ -171,7 +197,10 @@ when a toolchain is missing.
 - An adapter for a missing tool is **detection-only** in that environment. Its
   requirement report says `ready = false` with an install hint.
 - `.ece` is a **documented container, not a self-executing format**. Hashes
-  detect corruption; they are **not** a publisher signature. See
+  detect corruption; they are **not** a publisher signature. A publisher may
+  add an optional external signature (minisign/cosign/gpg) that is checked
+  only with `validate --verify-signature` / `extract --verify-signature`; a
+  missing tool or key is a warning, never a fake "verified". See
   [docs/ECE_FORMAT.md](docs/ECE_FORMAT.md) and [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Project layout
@@ -209,5 +238,4 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 ## License
 
-The license has **not been chosen yet**. Until the project owner selects one, no
-license is granted. Do not redistribute without permission.
+[MIT](LICENSE) — free to use, modify and redistribute.

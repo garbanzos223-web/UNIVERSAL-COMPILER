@@ -3,7 +3,7 @@
 ## Environment
 
 - Python 3.10–3.12. The project uses only the standard library.
-- Windows is the primary target; the code is portable to Linux/macOS.
+- **Windows 10/11 x64 is the only supported platform.**
 - No third-party packages are required to run or test.
 
 Run everything from the source tree:

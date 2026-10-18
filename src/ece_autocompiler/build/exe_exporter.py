@@ -1,11 +1,19 @@
-"""Standalone executable (``.exe``) export for Python projects.
+"""Standalone executable (``.exe``) export for Windows x64.
 
-This is the "turn my code into an .exe" path. It drives **PyInstaller** as a
-subprocess (argv list, never a shell string) to bundle a Python project — and
-its interpreter — into a single Windows executable.
+This is the "turn my code into an .exe" path. It scans the project, detects
+its language and drives that language's own toolchain:
 
-Only Python projects are supported here. Other languages require their own
-toolchain; those are reported by their adapters rather than faked.
+* Python  -> PyInstaller (``export_exe`` below), ``--onefile`` or ``--onedir``;
+* C#/.NET -> ``dotnet publish -c Release -r win-x64 --self-contained``
+  (``PublishSingleFile`` when single-file mode is chosen);
+* Rust    -> ``cargo build --release``;
+* Go      -> ``go build -o app.exe``;
+* C/C++   -> CMake or Make, then the produced ``.exe`` is located.
+
+External tools are always invoked as argv lists, never shell strings, and only
+after an honest "is it installed" check with an install hint. Node.js needs a
+bundler (pkg/nexe) and game engines build their own projects; both are reported
+instead of faked.
 """
 
 from __future__ import annotations
@@ -182,11 +190,29 @@ def export_exe(
             produced = nested
     if run.ok and produced.is_file():
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(produced), str(out_path))
+        if onefile:
+            shutil.move(str(produced), str(out_path))
+        else:
+            # Folder mode: the executable needs its DLLs/helpers next to it,
+            # so the whole bundle folder is moved, not just the .exe. The
+            # executable inside takes the requested output name.
+            bundle_dir = produced.parent
+            target_dir = out_path.parent / out_path.stem
+            if target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+            shutil.move(str(bundle_dir), str(target_dir))
+            final_exe = target_dir / f"{out_path.stem}.exe"
+            if produced.name != final_exe.name:
+                (target_dir / produced.name).rename(final_exe)
+            out_path = final_exe
         shutil.rmtree(work, ignore_errors=True)
         notes = [f"Entry point: {entry_path.relative_to(project).as_posix()}"]
         if not console:
             notes.append("Windowed app: no console is attached.")
+        if not onefile:
+            notes.append(
+                f"Folder mode: keep '{out_path.parent.name}\\' together with the executable."
+            )
         return ExeExportResult(
             ok=True,
             exe_path=out_path,
@@ -334,7 +360,8 @@ def compile_exe(
     if adapter_id == "node":
         return ExeExportResult(
             ok=False, exe_path=None, language=label, adapter_id=adapter_id,
-            message="Node.js .exe export is not supported yet (needs pkg/nexe). "
+            message="Node.js .exe export needs a bundler that is not installed "
+                    "(pkg or nexe). Install one with: npm install -g pkg. "
                     "The .ece build still works.",
             notes=["Detected Node.js. Use 'build' to package it as .ece."],
         )
@@ -373,13 +400,14 @@ def compile_exe(
     out_path = Path(output) if output else (cfg.output_dir / f"{exe_name}.exe")
     return _compile_native(
         adapter_id, label, project, out_path, exe_name, cpp_compiler,
-        timeout=timeout, progress=progress, cancel=cancel, config=cfg,
+        onefile=onefile, timeout=timeout, progress=progress, cancel=cancel,
+        config=cfg,
     )
 
 
 def _compile_native(
     adapter_id, label, project, out_path, exe_name, cpp_compiler,
-    *, timeout, progress, cancel, config,
+    *, onefile=True, timeout, progress, cancel, config,
 ) -> ExeExportResult:
     """Build a native executable for a compiled language and locate the result."""
     import time as _time
@@ -399,10 +427,14 @@ def _compile_native(
 
     if adapter_id == "dotnet":
         publish = work / "publish"
-        _add("dotnet-publish", "dotnet publish (Release, win-x64, self-contained)",
-             [get_tool("dotnet").path or "dotnet", "publish", str(project),
-              "-c", "Release", "-r", "win-x64", "--self-contained", "true",
-              "-o", str(publish)])
+        argv = [get_tool("dotnet").path or "dotnet", "publish", str(project),
+                "-c", "Release", "-r", "win-x64", "--self-contained", "true"]
+        if onefile:
+            argv += ["-p:PublishSingleFile=true"]
+            title = "dotnet publish (Release, win-x64, self-contained, single file)"
+        else:
+            title = "dotnet publish (Release, win-x64, self-contained)"
+        _add("dotnet-publish", title, argv + ["-o", str(publish)])
         target_dir = publish
     elif adapter_id == "rust-cargo":
         _add("cargo-build", "cargo build --release",
@@ -444,11 +476,17 @@ def _compile_native(
         if produced.resolve() != out_path.resolve():
             shutil.copy2(str(produced), str(out_path))
         shutil.rmtree(work, ignore_errors=True)
+        notes = [f"Built with the native {label} toolchain."]
+        if not onefile and adapter_id != "dotnet":
+            notes.append(
+                "The single-file/folder choice does not apply here: this "
+                "toolchain already produces one .exe."
+            )
         return ExeExportResult(
             ok=True, exe_path=out_path, message="Executable created",
             exit_code=run.exit_code, duration_seconds=run.duration_seconds,
             language=label, adapter_id=adapter_id,
-            notes=[f"Built with the native {label} toolchain."],
+            notes=notes,
         )
 
     shutil.rmtree(work, ignore_errors=True)

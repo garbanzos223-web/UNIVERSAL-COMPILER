@@ -182,7 +182,7 @@ IGNORED_FILE_SUFFIXES: tuple[str, ...] = (".pyc", ".pyo", ".pdb", ".obj", ".o", 
 class DetectionCandidate:
     adapter_id: str
     project_type: str
-    root: str  # relative POSIX path, "" for the scanned root
+    root: str  # relative path using '/' separators, "" for the scanned root
     confidence: float
     evidence: list[str] = field(default_factory=list)
     notes: str = ""

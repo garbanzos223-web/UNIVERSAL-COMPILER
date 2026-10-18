@@ -33,14 +33,23 @@ Legend:
 ## Executable (`.exe`) export
 
 The `exe` command (and the GUI's **Build .exe** mode) turns a project into a
-Windows executable:
+standalone **Windows x64** executable. Layout options: **onefile** (one big
+`.exe`, slower start) or **onedir** (`--onedir`: a folder with the `.exe` and
+its runtime, faster start).
 
-| Technology | `.exe` export | How |
-| --- | --- | --- |
-| Python | **Supported (verified)** | PyInstaller bundles the entry point + interpreter into a single `.exe`. |
-| Node.js | Not yet | Would need a bundler such as `pkg`/`nexe`; detection and the `.ece` build still work. |
-| C#, C++, Rust, Go, Java | Tool-gated | These produce native executables with their **own** compiler (`dotnet`, `cargo`, `go build`, ...). The adapter runs it only when the toolchain is installed. |
-| Unity, Unreal | Not supported here | Games are built inside their engine/editor; this tool detects them and reports the missing engine rather than faking an `.exe`. |
+| Technology | `.exe` export | Layout choice honoured | How |
+| --- | --- | --- | --- |
+| Python | **Supported (verified)** | yes — `--onefile` (default) / `--onedir` | PyInstaller bundles the entry point + interpreter. |
+| C# / .NET | Tool-gated | yes — `PublishSingleFile` in onefile mode | `dotnet publish -c Release -r win-x64 --self-contained`. |
+| Rust | Tool-gated | n/a — the toolchain already emits one `.exe` | `cargo build --release` → `target\release\*.exe`. |
+| Go | Tool-gated | n/a — already one `.exe` | `go build -o app.exe`. |
+| C/C++ (CMake/Make) | Tool-gated | n/a — already one `.exe` | CMake/Make build → the produced `.exe` is located. |
+| Node.js | Not yet | — | Would need a bundler such as `pkg`/`nexe`; detection and the `.ece` build still work. |
+| Unity, Unreal | Not supported here | — | Games are built inside their engine/editor; this tool detects them and reports the missing engine rather than faking an `.exe`. |
+
+Tool-gated means: the toolchain is looked up in `PATH` and, if it is missing,
+the export **fails with an install hint** (`winget`/`scoop`/`choco`/`pip`)
+instead of pretending to build.
 
 ## Package-manager detection
 

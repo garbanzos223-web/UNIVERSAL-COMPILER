@@ -21,6 +21,13 @@ from ..config import Limits
 from ..container.model import FileEntry
 from ..container.reader import ContainerReader
 from ..container.security import ensure_no_symlink_target, is_junction_or_symlink, resolve_destination
+from ..container.signature import (
+    STATE_INVALID,
+    STATE_KEY_MISSING,
+    STATE_TOOL_MISSING,
+    STATE_VERIFIED,
+    verify_signature as verify_manifest_signature,
+)
 from ..errors import (
     ContainerError,
     ContainerFormatError,
@@ -65,6 +72,7 @@ class Extractor:
         *,
         overwrite: bool = False,
         verify_hashes: bool = True,
+        verify_signature: bool = False,
         selected_paths: Iterable[str] | None = None,
         progress: ProgressCallback | None = None,
         cancel: CancelCheck | None = None,
@@ -79,6 +87,25 @@ class Extractor:
 
         reader = ContainerReader(container_path, limits=self.limits)
         with reader:
+            # Optional signature check before a single byte hits the disk.
+            # An invalid signature aborts; an unverifiable one only warns,
+            # because a missing tool proves nothing about the container.
+            if verify_signature:
+                status = verify_manifest_signature(reader.manifest, container_path)
+                if status.state == STATE_INVALID:
+                    raise IntegrityError(
+                        "Container signature is invalid; refusing to extract",
+                        detail=status.detail,
+                    )
+                if status.state == STATE_TOOL_MISSING:
+                    report.warnings.append(
+                        f"Signature not verified ({status.alg} is not installed). {status.detail}"
+                    )
+                elif status.state == STATE_KEY_MISSING:
+                    report.warnings.append(f"Signature not verified. {status.detail}")
+                elif status.state == STATE_VERIFIED:
+                    log.info("Signature verified with %s before extraction", status.alg)
+
             entries = reader.entries()
             total = sum(e.size for e in entries if selection is None or e.path in selection)
             done = 0

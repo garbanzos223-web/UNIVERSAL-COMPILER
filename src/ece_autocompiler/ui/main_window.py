@@ -165,9 +165,14 @@ class MainWindow(ttk.Frame):
         # .exe options
         self.exe_opts = ttk.Frame(opts)
         self.console_var = tk.BooleanVar(value=False)
-        self.onefile_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.exe_opts, text="Console window", variable=self.console_var).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(self.exe_opts, text="Single file", variable=self.onefile_var).grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.exe_mode_var = tk.StringVar(value="onefile")
+        ttk.Radiobutton(
+            self.exe_opts, text="Single file", variable=self.exe_mode_var, value="onefile",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            self.exe_opts, text="Folder", variable=self.exe_mode_var, value="onedir",
+        ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Checkbutton(self.exe_opts, text="Console window", variable=self.console_var).grid(row=0, column=2, sticky="w", padx=(12, 0))
 
         # shared options
         ttk.Checkbutton(opts, text="Allow project scripts", variable=self.consent_var).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -376,7 +381,7 @@ class MainWindow(ttk.Frame):
             return compile_exe(
                 project,
                 output=output,
-                onefile=self.onefile_var.get(),
+                onefile=self.exe_mode_var.get() == "onefile",
                 console=self.console_var.get(),
                 progress=progress,
                 cancel=self._cancel,
@@ -384,6 +389,11 @@ class MainWindow(ttk.Frame):
             )
 
         self.ctx.runner.run(work, self._exe_done, lambda e: self._fail("Executable export failed", e))
+
+    @property
+    def onefile_var(self):
+        """Backward-compatible view of the .exe layout radio (True = onefile)."""
+        return self.exe_mode_var.get() == "onefile"
 
     def _exe_done(self, result) -> None:
         self._finish_build()
@@ -660,10 +670,15 @@ class ContainerDialog(_Dialog):
                     if report.hashes_verified
                     else ""
                 )
+                signed = ""
+                manifest = report.manifest or {}
+                sig = manifest.get("signature")
+                if isinstance(sig, dict) and sig.get("alg"):
+                    signed = f"  ·  signed ({sig['alg']}, not verified here)"
                 self.summary_var.set(
                     f"Valid .ece  ·  format v{report.format_version}"
                     f"  ·  {report.entry_count} entries  ·  {report.compression}"
-                    f"  ·  {_fmt_size(report.file_size)}{verified}"
+                    f"  ·  {_fmt_size(report.file_size)}{verified}{signed}"
                 )
                 self.extract_btn.configure(state="normal")
                 self.status_var.set("")

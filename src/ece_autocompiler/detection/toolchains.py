@@ -122,7 +122,7 @@ def _run_version(exe_path: str, args: tuple[str, ...], to_stdout: bool) -> str |
 def _candidate_paths(name: str) -> list[str]:
     """Executable names to try, preferred first.
 
-    On Windows, shutil.which may resolve an extensionless POSIX shim ahead of
+    On Windows, shutil.which may resolve an extensionless shim file ahead of
     the .cmd wrapper that CreateProcess can actually run, so the wrapper is
     preferred explicitly.
     """

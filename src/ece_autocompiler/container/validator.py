@@ -16,6 +16,13 @@ from ..errors import EceError
 from ..logging_config import get_logger
 from .model import compute_content_hash
 from .reader import ContainerReader
+from .signature import (
+    STATE_INVALID,
+    STATE_KEY_MISSING,
+    STATE_TOOL_MISSING,
+    STATE_VERIFIED,
+    verify_signature as verify_manifest_signature,
+)
 
 log = get_logger("container.validator")
 
@@ -51,6 +58,9 @@ class ValidationReport:
     manifest: dict | None = None
     hashes_verified: bool = False
     failed_entries: list[str] = field(default_factory=list)
+    # "not-checked" (default), "none" (checked, unsigned) or the state from
+    # container/signature.py: verified, invalid, tool-missing, key-missing.
+    signature_state: str = "not-checked"
 
     @property
     def errors(self) -> list[ValidationIssue]:
@@ -66,11 +76,14 @@ def validate_container(
     *,
     limits: Limits | None = None,
     deep: bool = False,
+    verify_signature: bool = False,
 ) -> ValidationReport:
     """Validate an .ece file and return a report.
 
     ``deep=True`` additionally re-hashes every entry and recomputes the package
-    content hash.
+    content hash. ``verify_signature=True`` verifies an optional manifest
+    signature with its external tool (minisign/cosign/gpg); without the flag
+    only hashes are checked.
     """
     path = Path(path)
     report = ValidationReport(path=path)
@@ -175,6 +188,50 @@ def validate_container(
             failed = _deep_verify(reader, report)
             report.hashes_verified = True
             report.failed_entries = failed
+
+        # Optional detached signature. Off by default: verification shells out
+        # to an external tool and proves authenticity, not integrity.
+        if verify_signature:
+            status = verify_manifest_signature(manifest, path)
+            report.signature_state = status.state
+            if not status.present:
+                report.issues.append(
+                    ValidationIssue(
+                        SEVERITY_INFO, "ece.container.unsigned",
+                        "Container has no signature (integrity hashes only)",
+                    )
+                )
+            elif status.state == STATE_VERIFIED:
+                report.issues.append(
+                    ValidationIssue(
+                        SEVERITY_INFO, "ece.container.signature_verified",
+                        f"Signature verified with {status.alg}",
+                    )
+                )
+            elif status.state == STATE_INVALID:
+                report.issues.append(
+                    ValidationIssue(
+                        SEVERITY_ERROR, "ece.container.signature_invalid",
+                        "Container signature is invalid", status.detail,
+                    )
+                )
+            elif status.state == STATE_TOOL_MISSING:
+                report.issues.append(
+                    ValidationIssue(
+                        SEVERITY_WARNING, "ece.container.signature_tool_missing",
+                        f"Cannot verify the signature: {status.alg} is not installed",
+                        status.detail,
+                    )
+                )
+            elif status.state == STATE_KEY_MISSING:
+                report.issues.append(
+                    ValidationIssue(
+                        SEVERITY_WARNING, "ece.container.signature_key_missing",
+                        "Cannot verify the signature", status.detail,
+                    )
+                )
+        elif manifest.signature:
+            report.signature_state = "present"
 
         report.ok = not report.errors
     finally:

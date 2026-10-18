@@ -74,19 +74,19 @@ def normalize_entry_path(
     if _CONTROL_CHARS.search(text):
         raise UnsafePathError("Entry path contains control characters")
 
-    # Reject backslashes outright: they are drive/UNC separators on Windows and
-    # ambiguous on POSIX. Entry paths always use '/'.
+    # Reject backslashes outright: they are drive/UNC separators on Windows
+    # and make paths ambiguous. Entry paths always use '/'.
     if "\\" in text:
         raise UnsafePathError("Entry path contains a backslash", detail=text)
 
     if _DRIVE_PREFIX.match(text):
         raise UnsafePathError("Entry path is an absolute Windows path", detail=text)
 
-    if text.startswith("/"):
-        raise UnsafePathError("Entry path is an absolute POSIX path", detail=text)
-
     if text.startswith("//"):
         raise UnsafePathError("Entry path is a UNC path", detail=text)
+
+    if text.startswith("/"):
+        raise UnsafePathError("Entry path is an absolute path", detail=text)
 
     pure = PurePosixPath(text)
 
@@ -133,6 +133,16 @@ def resolve_destination(root: Path, entry_path: str, *, max_length: int = DEFAUL
 
     root_resolved = Path(root).resolve()
     candidate = root_resolved.joinpath(*entry_path.split("/"))
+
+    # Belt and braces on Windows: the joined path must also survive
+    # os.path.normpath containment (blocks any "C:\..." / "..\" style escape
+    # even if a segment ever slipped past the parser above).
+    norm_root = os.path.normcase(os.path.normpath(str(root_resolved)))
+    norm_candidate = os.path.normcase(os.path.normpath(str(candidate)))
+    if norm_candidate != norm_root and not norm_candidate.startswith(norm_root + os.sep):
+        raise UnsafePathError(
+            "Destination escapes the extraction root", detail=entry_path
+        )
 
     # Walk up from the target to find the deepest existing ancestor and confirm
     # it still sits inside root. This defeats a symlink planted inside root.

@@ -16,6 +16,7 @@ from typing import Any
 from ..errors import ContainerFormatError
 from ..version import APP_NAME, APP_VERSION, CONTAINER_FORMAT_VERSION
 from .security import normalize_entry_path
+from .signature import SIGNATURE_ALGS, decode_signature_value
 from .spec import COMPRESSION_NAMES, HASH_NAMES
 
 
@@ -117,6 +118,9 @@ class Manifest:
     total_uncompressed: int = 0
     content_hash: str = ""
     content_hash_algo: str = "sha256"
+    # Optional detached signature over content_hash: None or
+    # {"alg": "minisign"|"cosign"|"gpg", "value": "<base64>"}.
+    signature: dict[str, Any] | None = None
     unknown_fields: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +149,7 @@ class Manifest:
                 "hash_algo": self.content_hash_algo,
                 "content_hash": self.content_hash,
             },
+            "signature": self.signature,
             "notes": self.notes,
         }
         # Unknown keys from a newer minor version survive a rewrite.
@@ -180,12 +185,25 @@ class Manifest:
             "package",
             "target",
             "content",
+            "signature",
             "notes",
         }
         unknown = {k: v for k, v in raw.items() if k not in known}
 
         created_by = raw.get("created_by") or {}
         tool_version = str(created_by.get("tool_version", APP_VERSION)) if isinstance(created_by, dict) else APP_VERSION
+
+        signature = raw.get("signature")
+        if signature is not None:
+            _require(isinstance(signature, dict), "Manifest 'signature' must be an object or null")
+            alg = str(signature.get("alg", ""))
+            value = str(signature.get("value", ""))
+            _require(alg in SIGNATURE_ALGS, f"Unknown signature algorithm: {alg}")
+            _require(bool(value), "Signature 'value' must not be empty")
+            try:
+                decode_signature_value(value)
+            except ValueError as exc:
+                _require(False, f"Signature 'value' is invalid: {exc}")
 
         return cls(
             project_name=str(project.get("name", "unnamed")),
@@ -203,6 +221,7 @@ class Manifest:
             total_uncompressed=int(content.get("total_uncompressed", 0)),
             content_hash=str(content.get("content_hash", "")),
             content_hash_algo=str(content.get("hash_algo", "sha256")),
+            signature=signature,
             unknown_fields=unknown,
         )
 

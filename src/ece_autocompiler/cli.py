@@ -66,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate = sub.add_parser("validate", help="Validate an .ece container.")
     p_validate.add_argument("file", help="Container file.")
     p_validate.add_argument("--deep", action="store_true", help="Also verify every entry hash.")
+    p_validate.add_argument(
+        "--verify-signature", action="store_true",
+        help="Verify the manifest signature with its external tool (minisign/cosign/gpg).",
+    )
     p_validate.add_argument("--json", action="store_true", help="Emit JSON.")
 
     p_inspect = sub.add_parser("inspect", help="Print a container's manifest and file index.")
@@ -76,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument("file", help="Container file.")
     p_extract.add_argument("dest", help="Destination directory.")
     p_extract.add_argument("--overwrite", action="store_true", help="Overwrite existing files.")
+    p_extract.add_argument(
+        "--verify-signature", action="store_true",
+        help="Verify the manifest signature first; an invalid signature aborts the extraction.",
+    )
 
     p_tools = sub.add_parser("tools", help="List detected toolchains.")
     p_tools.add_argument("--json", action="store_true", help="Emit JSON.")
@@ -234,7 +242,9 @@ def cmd_build(args) -> int:
 
 
 def cmd_validate(args) -> int:
-    report = validate_container(args.file, deep=args.deep)
+    report = validate_container(
+        args.file, deep=args.deep, verify_signature=args.verify_signature
+    )
     if args.json:
         _print(
             json.dumps(
@@ -248,6 +258,7 @@ def cmd_validate(args) -> int:
                     "total_uncompressed": report.total_uncompressed,
                     "hashes_verified": report.hashes_verified,
                     "failed_entries": report.failed_entries,
+                    "signature_state": report.signature_state,
                     "issues": [
                         {"severity": i.severity, "code": i.code, "message": i.message, "detail": i.detail}
                         for i in report.issues
@@ -262,6 +273,8 @@ def cmd_validate(args) -> int:
     _print(f"File: {report.path}")
     _print(f"Format: {report.format_version}  compression={report.compression}  hash={report.hash_algo}")
     _print(f"Entries: {report.entry_count}  uncompressed={report.total_uncompressed} bytes")
+    if report.signature_state != "not-checked":
+        _print(f"Signature: {report.signature_state}")
     for issue in report.issues:
         _print(f"  {issue}")
     _print("Result: " + ("VALID" if report.ok else "INVALID"))
@@ -298,10 +311,16 @@ def cmd_inspect(args) -> int:
 
 def cmd_extract(args) -> int:
     try:
-        report = Extractor().extract(args.file, args.dest, overwrite=args.overwrite)
+        report = Extractor().extract(
+            args.file, args.dest,
+            overwrite=args.overwrite,
+            verify_signature=args.verify_signature,
+        )
     except EceError as exc:
         _print(f"error: {exc}")
         return EXIT_ERROR
+    for warning in report.warnings:
+        _print(f"warning: {warning}")
     _print(f"Extracted to {args.dest}: {report.summary}")
     return EXIT_OK
 

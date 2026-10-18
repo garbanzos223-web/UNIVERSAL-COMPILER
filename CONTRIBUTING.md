@@ -2,6 +2,9 @@
 
 Thanks for your interest. This project values honesty and safety over breadth.
 
+By contributing you agree that your contributions are licensed under the
+[MIT License](LICENSE), the same license that covers the project.
+
 ## Ground rules
 
 - **Never fake a build result.** If a tool is missing, report it. Do not add an
