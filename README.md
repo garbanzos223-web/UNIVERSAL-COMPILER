@@ -9,7 +9,7 @@ versioned `.ece` container — or exports the project to a standalone Windows
 
 *From a desktop window or the command line — no third-party Python packages.*
 
-[Features](#features) · [Quick start](#quick-start) · [The `.exe`](#standalone-windows-app-exe) · [CLI](#command-line) · [Docs](#documentation) · [Honest by design](#honest-by-design)
+[What's new](#whats-new-in-12-new-visuals-and-useful-tools) · [Features](#features) · [Quick start](#quick-start) · [The `.exe`](#standalone-windows-app-exe) · [CLI](#command-line) · [Docs](#documentation) · [Honest by design](#honest-by-design)
 
 <p align="center">
   <img src="docs/img/screenshot.png" alt="Desktop window: project folder, detection badge, output mode, build log" width="820">
@@ -19,11 +19,53 @@ versioned `.ece` container — or exports the project to a standalone Windows
 
 ---
 
-> **Status: 0.1.0 (alpha), Windows 10/11 x64 only.** What runs **for real**:
+> **Status: 1.2, Windows 10/11 x64 only.** What runs **for real**:
 > Python and Node.js `.ece` builds, Python `.exe` export (PyInstaller), and —
 > when the toolchain is installed — native `.exe` builds for C#/.NET, Rust, Go
 > and C/C++. Everything else is *detected* and *reported* with an install hint;
 > nothing about a missing toolchain is ever faked.
+
+---
+
+## What's new in 1.2: New visuals and useful tools
+
+This is the current release. It is about telling you **what this tool can actually
+do on your PC** instead of letting you find out by failing:
+
+- **The real desktop window, in the README.** The screenshot at the top is an
+  actual capture of the shipped GUI: a dark, card-based window with a project
+  badge, output mode and a live colour-coded log.
+- **Export readiness before you try.** `analyze` (and the desktop **Detect**)
+  answers "can this become an `.exe` here?" per candidate, with the exact next
+  step when the answer is no: `analyze --json` carries a per-candidate
+  `exe_readiness` object.
+- **Failures in a fixed shape.** Build and `.exe` errors are reported as
+  *what happened / why / what to do* — in the CLI, in the window, and in the
+  build history — never as a single opaque line.
+- **Windows path-collision guard for `.ece`.** The writer refuses to create
+  paths Windows treats as the same file, the extractor refuses *before writing
+  any byte*, and the validator only warns. Existing containers stay readable.
+- **Verified release builds.** `scripts\build_exe.ps1` builds a frozen desktop
+  app and a frozen console app, then `tools\release_check.py` runs them for
+  real (`--version`, launch probe), recording size and SHA256 in
+  `dist\release.json`. A build that cannot run fails the script and is never
+  called a release.
+- **Troubleshooting that names the real paths.**
+  [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers antivirus/SmartScreen,
+  missing toolchains, and where logs and history actually live.
+
+### Planned next — 40 usability improvements
+
+[New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) is the
+working plan for the next release: copyable install commands
+(`winget`/`choco`/`scoop`/URL) whenever a toolchain is missing, a first-run
+assistant, a build-plan preview, `.ece` comparison, a `doctor` command, and a
+**build-time bar** that estimates and reports elapsed/remaining time from your
+own local history.
+
+That document is a **plan, not a claim**: each item ships only when its stated
+verification passes. Everything always stays on your machine
+(`%LOCALAPPDATA%\ECE-Universal-AutoCompiler\` — config, history, logs, cache).
 
 ---
 
@@ -272,6 +314,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 - [Development](docs/DEVELOPMENT.md) — setup, tests, building the `.exe`.
 - [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — what changed, ready to
   paste into a GitHub release.
+- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) — what
+  release 1.2 ships and the 40-item usability plan for the next one.
 
 ## Contributing
 

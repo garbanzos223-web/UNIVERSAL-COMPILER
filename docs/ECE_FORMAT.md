@@ -88,7 +88,7 @@ Stored as UTF-8 JSON (compressed). Keys:
 ```jsonc
 {
   "format_version": 1,
-  "created_by": { "tool": "ECE Universal AutoCompiler", "tool_version": "0.1.0" },
+  "created_by": { "tool": "ECE Universal AutoCompiler", "tool_version": "1.2" },
   "created_utc": "2026-01-01T00:00:00Z",
   "project": {
     "name": "myproject",
