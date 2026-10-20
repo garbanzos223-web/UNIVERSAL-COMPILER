@@ -849,6 +849,7 @@ class MainWindow(ttk.Frame):
                 progress=progress,
                 cancel=self._cancel,
                 config=self.ctx.config,
+                consent_granted=self.consent_var.get(),
             )
 
         self.ctx.runner.run(work, self._exe_done, lambda e: self._fail("Executable export failed", e))

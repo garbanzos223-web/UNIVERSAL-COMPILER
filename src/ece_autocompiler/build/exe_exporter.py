@@ -485,11 +485,11 @@ def _first_exe(directory: Path, prefer: str | None = None) -> Path | None:
 
 
 def _run_steps(steps, workdir, *, timeout, progress, cancel, config,
-               log_name: str) -> RunResult:
+               log_name: str, consent_granted: bool = False) -> RunResult:
     log_path = config.work_dir / "logs" / f"{log_name}.log"
     return run_command(
         steps=steps, workdir=workdir, progress=progress, cancel=cancel,
-        log_path=log_path, config=config,
+        log_path=log_path, config=config, consent_granted=consent_granted,
     )
 
 
@@ -505,8 +505,14 @@ def compile_exe(
     progress=None,
     cancel=None,
     config: AppConfig | None = None,
+    consent_granted: bool = False,
 ) -> ExeExportResult:
-    """Detect a project's language and compile it into a Windows executable."""
+    """Detect a project's language and compile it into a Windows executable.
+
+    *consent_granted* allows the steps that execute project-controlled code
+    (a CMake configure, a Cargo build script, an MSBuild target). Without it
+    the export stops and says which step needed it.
+    """
     cfg = config or AppConfig()
     cfg.ensure_directories()
     project = Path(project).resolve()
@@ -617,13 +623,13 @@ def compile_exe(
     return _compile_native(
         adapter_id, label, project, out_path, exe_name, cpp_compiler,
         onefile=onefile, timeout=timeout, progress=progress, cancel=cancel,
-        config=cfg,
+        config=cfg, consent_granted=consent_granted,
     )
 
 
 def _compile_native(
     adapter_id, label, project, out_path, exe_name, cpp_compiler,
-    *, onefile=True, timeout, progress, cancel, config,
+    *, onefile=True, timeout, progress, cancel, config, consent_granted=False,
 ) -> ExeExportResult:
     """Build a native executable for a compiled language and locate the result."""
     # Unique per build; see the note in export_exe about same-second runs.
@@ -631,10 +637,12 @@ def _compile_native(
     work = new_work_dir(config)
     steps: list[BuildPlanStep] = []
 
-    def _add(sid, title, argv, wd=None):
+    def _add(sid, title, argv, wd=None, approval=False):
+        # Steps that execute project-controlled code (a CMake configure, a
+        # Cargo build script, an MSBuild target) need the user's consent.
         steps.append(BuildPlanStep(
             id=sid, title=title, cmd_args=argv, workdir=wd or project,
-            timeout=timeout, requires_approval=False,
+            timeout=timeout, requires_approval=approval,
         ))
 
     exe_dir = out_path.parent
@@ -649,12 +657,12 @@ def _compile_native(
             title = "dotnet publish (Release, win-x64, self-contained, single file)"
         else:
             title = "dotnet publish (Release, win-x64, self-contained)"
-        _add("dotnet-publish", title, argv + ["-o", str(publish)])
+        _add("dotnet-publish", title, argv + ["-o", str(publish)], approval=True)
         target_dir = publish
     elif adapter_id == "rust-cargo":
         _add("cargo-build", "cargo build --release",
              [get_tool("cargo").path or "cargo", "build", "--release",
-              "--manifest-path", str(project / "Cargo.toml")])
+              "--manifest-path", str(project / "Cargo.toml")], approval=True)
         target_dir = project / "target" / "release"
     elif adapter_id == "go":
         _add("go-build", "go build",
@@ -663,14 +671,16 @@ def _compile_native(
     elif adapter_id == "cpp-cmake":
         build_dir = work / "cmake-build"
         _add("cmake-configure", "cmake configure",
-             [get_tool("cmake").path or "cmake", "-S", str(project), "-B", str(build_dir)])
+             [get_tool("cmake").path or "cmake", "-S", str(project), "-B", str(build_dir)],
+             approval=True)
         _add("cmake-build", "cmake --build (Release, parallel)",
              [get_tool("cmake").path or "cmake", "--build", str(build_dir),
-              "--config", "Release", "--parallel", parallel_jobs()])
+              "--config", "Release", "--parallel", parallel_jobs()], approval=True)
         target_dir = build_dir
     elif adapter_id == "cpp-make":
         _add("make-build", "make (Release, parallel)",
-             [get_tool("make").path or "make", "-j", parallel_jobs(), "RELEASE=1"], wd=project)
+             [get_tool("make").path or "make", "-j", parallel_jobs(), "RELEASE=1"], wd=project,
+             approval=True)
         target_dir = project
     else:  # pragma: no cover - guarded by _NATIVE_TOOLS
         return ExeExportResult(ok=False, exe_path=None, language=label,
@@ -679,7 +689,8 @@ def _compile_native(
     if progress:
         progress(f"Compiling {label} into an executable", 0, 100)
     run = _run_steps(steps, project, timeout=timeout, progress=progress,
-                     cancel=cancel, config=config, log_name=work.name)
+                     cancel=cancel, config=config, log_name=work.name,
+                     consent_granted=consent_granted)
 
     produced = None
     if adapter_id == "go" and out_path.is_file():
@@ -706,6 +717,23 @@ def _compile_native(
         )
 
     # Kept for diagnosis, same as the Python path above.
+    needs_consent = any("Consent required" in error for error in run.errors)
+    if needs_consent:
+        return ExeExportResult(
+            ok=False, exe_path=None,
+            message=f"{label} .exe build needs your consent.",
+            exit_code=run.exit_code, duration_seconds=run.duration_seconds,
+            language=label, adapter_id=adapter_id,
+            errors=list(run.errors),
+            notes=["Nothing was executed."],
+            actions=[
+                "The step above runs commands defined by the project (a CMake "
+                "configure, a Cargo build script, an MSBuild target).",
+                "Allow it with --consent on the command line, or with the "
+                "'Allow project scripts' option in the window, and export again.",
+                "Only do this for a project you trust.",
+            ],
+        )
     return ExeExportResult(
         ok=False, exe_path=None, message=f"{label} .exe build failed.",
         exit_code=run.exit_code, duration_seconds=run.duration_seconds,

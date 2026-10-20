@@ -182,13 +182,23 @@ def _exe_steps(adapter_id: str, project: Path, out_path: Path, *, onefile: bool,
         steps.append(("go-build", "go build",
                       [tool_path("go", "go"), "build", "-o", out_path.name, "."], False))
     elif adapter_id == "cpp-cmake":
+        # Configuring runs the project's CMakeLists.txt: project-controlled code.
         steps.append(("cmake-configure", "cmake configure",
-                      [tool_path("cmake", "cmake"), "-S", ".", "-B", "build"], False))
-        steps.append(("cmake-build", "cmake --build (Release)",
-                      [tool_path("cmake", "cmake"), "--build", "build", "--config", "Release"], False))
+                      [tool_path("cmake", "cmake"), "-S", ".", "-B", "build"], True))
+        steps.append(("cmake-build", "cmake --build (Release, parallel)",
+                      [tool_path("cmake", "cmake"), "--build", "build", "--config", "Release",
+                       "--parallel", _parallel_jobs()], True))
     elif adapter_id == "cpp-make":
-        steps.append(("make-build", "make (Release)", [tool_path("make", "make"), "RELEASE=1"], False))
+        steps.append(("make-build", "make (Release, parallel)",
+                      [tool_path("make", "make"), "-j", _parallel_jobs(), "RELEASE=1"], False))
     return steps, notes
+
+
+def _parallel_jobs() -> str:
+    """How many build jobs the toolchain may run in parallel."""
+    from ..build.process import parallel_jobs
+
+    return parallel_jobs()
 
 
 def _exe_plan(project: Path, adapter_id: str, label: str, preview: PlanPreview,

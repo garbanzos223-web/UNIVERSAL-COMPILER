@@ -51,6 +51,13 @@ Tool-gated means: the toolchain is looked up in `PATH` and, if it is missing,
 the export **fails with an install hint** (`winget`/`scoop`/`choco`/`pip`)
 instead of pretending to build.
 
+**Consent.** The export of a native toolchain may run commands that come from
+the project (a CMake configure runs `CMakeLists.txt`, Cargo runs `build.rs`,
+MSBuild runs the project's targets). Those steps need explicit consent:
+`--consent` on the command line, or **Allow project scripts** in the window.
+Without it the export stops before running anything and says which step
+needed it.
+
 ## Package-manager detection
 
 For Node and Python projects the detector reads lock files to report which

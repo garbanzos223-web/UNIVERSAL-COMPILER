@@ -218,6 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_exe.add_argument("--onedir", action="store_true", help="Folder mode instead of a single file (Python).")
     p_exe.add_argument("--console", action="store_true", help="Attach a console (default: windowed for Python).")
     p_exe.add_argument("--timeout", type=int, default=1800, help="Build timeout in seconds.")
+    p_exe.add_argument(
+        "--consent",
+        action="store_true",
+        help="Allow the steps that run commands defined by the project (a CMake "
+             "configure, a Cargo build script, an MSBuild target).",
+    )
     p_exe.add_argument("--plan", action="store_true", help="Print the plan and exit (dry run).")
     p_exe.add_argument("--no-integrity", action="store_true", help="Do not write a .sha256 sidecar.")
     p_exe.add_argument("--quiet", action="store_true", help="Suppress progress.")
@@ -1084,6 +1090,7 @@ def cmd_exe(args) -> int:
         timeout=args.timeout,
         progress=_progress_printer(args),
         config=cfg,
+        consent_granted=bool(getattr(args, "consent", False)),
     )
 
     from .build.history import append as history_append, make_record

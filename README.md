@@ -268,6 +268,12 @@ If the required compiler is missing, the tool **says so** with an install hint
 instead of pretending to build. Options: `--entry`, `--onedir`, `--console`,
 `--name`, `--timeout`. See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
 
+Some toolchains run commands that come from the project (a CMake configure runs
+the project's `CMakeLists.txt`, Cargo runs `build.rs`, MSBuild runs the
+project's targets). Those steps need **consent**: pass `--consent` on the
+command line, or tick **Allow project scripts** in the window. Nothing runs
+without it.
+
 ### `.exe` layout: `onefile` vs `onedir`
 
 The Python exporter and the app builder (`scripts\build_exe.ps1 -Layout ...`)
