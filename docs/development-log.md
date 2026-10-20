@@ -290,12 +290,24 @@ disk - was the bottleneck.
   `os.path.relpath()` does the same job as a string operation.
 - `_walk()` rebuilt the relative path of every file from scratch; the
   directory prefix is now computed once per folder.
+- `_walk()` called `Path.resolve()` for every folder to know how deep it was;
+  the depth now comes from the relative path, so the walk never resolves a
+  path (that was 124 filesystem calls).
 - `_match_markers()` rebuilt the set of file names of a directory **for every
   marker** (30 markers x 60 folders). The names and suffixes of a folder are
   now indexed once.
 - `_detect_by_sources()` compared every file against every language's suffix
   list (14 comparisons per file). There is now one dictionary lookup per
   file.
+- The remaining string work (`os.path.basename`, `os.path.splitext`) was
+  replaced with plain string operations, which are about four times faster.
+
+### Result
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| `scan()` on 3000 files | 207 ms | **18.5 ms** (11x) |
+| full `build` of that project | 808 ms | **388 ms** |
 
 ### Behaviour that changed on purpose
 
@@ -305,7 +317,7 @@ the original name next to the lowercased one.
 
 ### Tests executed
 
-- `python -m unittest discover -s tests -t .` -> **406 tests, OK (skipped=1)**.
+- `python -m unittest discover -s tests -t .` -> **408 tests, OK (skipped=1)**.
 - `python tools/lint_stdlib.py` -> **85 files clean**.
 
 ---

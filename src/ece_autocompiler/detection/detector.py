@@ -106,17 +106,18 @@ def _walk(root: Path, limits: Limits) -> tuple[list[str], set[str], int, bool]:
     directories: set[str] = set()
     truncated = False
 
-    root_depth = len(root.resolve().parts)
     for current, dirnames, filenames in os.walk(root, topdown=True):
         current_path = Path(current)
-        depth = len(current_path.resolve().parts) - root_depth
+        rel_dir = _relative(root, current_path)
+        # The depth is the number of segments below the root. It is derived
+        # from the relative path so the walk never has to resolve a path.
+        depth = 0 if rel_dir == "." else rel_dir.count("/") + 1
         # Prune ignored and over-deep directories in place.
         dirnames[:] = [
             d
             for d in dirnames
             if d not in IGNORED_DIRECTORIES and not d.startswith(".") and depth < limits.max_scan_depth
         ]
-        rel_dir = _relative(root, current_path)
         if rel_dir != ".":
             directories.add(rel_dir)
             prefix = rel_dir + "/"
@@ -143,13 +144,16 @@ def _directory_index(directory_files: list[str]) -> tuple[set[str], dict[str, st
     names: set[str] = set()
     by_suffix: dict[str, str] = {}
     for entry in directory_files:
-        base = os.path.basename(entry)
+        # Plain string operations: this runs for every file of the tree.
+        base = entry.rsplit("/", 1)[-1]
+        if "\\" in base:
+            base = base.rsplit("\\", 1)[-1]
         lowered = base.lower()
         names.add(lowered)
         by_suffix.setdefault(lowered, base)
-        suffix = os.path.splitext(lowered)[1]
-        if suffix:
-            by_suffix.setdefault(suffix, base)
+        dot = lowered.rfind(".")
+        if dot > 0:
+            by_suffix.setdefault(lowered[dot:], base)
     return names, by_suffix
 
 
@@ -332,7 +336,8 @@ def _detect_by_sources(root: Path, by_dir: dict[str, list[str]]) -> dict[tuple[s
         for rel in dir_files:
             # One dictionary lookup per file instead of one comparison per
             # language: this runs on every file of a large tree.
-            language = _SUFFIX_TO_LANGUAGE.get(os.path.splitext(rel)[1].lower())
+            dot = rel.rfind(".")
+            language = _SUFFIX_TO_LANGUAGE.get(rel[dot:].lower()) if dot > 0 else None
             if language:
                 counts[language] = counts.get(language, 0) + 1
         if not counts:

@@ -62,6 +62,21 @@ class DetectionTests(unittest.TestCase):
         result = scan(root)
         self.assertEqual(result.total_files, len(files))
 
+    def test_the_depth_limit_still_bounds_the_scan(self) -> None:
+        from ece_autocompiler.config import Limits
+
+        deep = {"a/b/c/d/e/f/g/keep.py": "x = 1\n"}
+        root = _project(deep)
+        shallow = scan(root, limits=Limits(max_scan_depth=3))
+        self.assertLess(shallow.total_files, 1)
+        full = scan(root)
+        self.assertEqual(full.total_files, 1)
+
+    def test_ignored_directories_are_not_scanned(self) -> None:
+        root = _project({"app.py": "x = 1\n", "node_modules/dep/index.js": "//\n"})
+        result = scan(root)
+        self.assertEqual(result.total_files, 1)
+
     def test_rust(self) -> None:
         root = _project({"Cargo.toml": '[package]\nname="x"'})
         self.assertIn("rust-cargo", [c.adapter_id for c in scan(root).candidates])
