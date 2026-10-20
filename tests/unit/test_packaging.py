@@ -222,6 +222,61 @@ class ZipPackageTests(PackageTestCase):
         self.assertIn("not available", result.message)
 
 
+class InstallerScriptTests(unittest.TestCase):
+    """The installer scripts are plain text, so they can be checked here."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.staging = self.tmp / "staging"
+        self.staging.mkdir()
+        (self.staging / "app.exe").write_bytes(b"MZ")
+        (self.staging / "app.ico").write_bytes(b"icon")
+        (self.staging / "data.txt").write_text("x", encoding="utf-8")
+        self.request = PackageRequest(
+            project=self.tmp,
+            output_dir=self.tmp / "out",
+            fmt="inno",
+            metadata=PackageMetadata(
+                name="Demo App", version="1.2.0", description="A demo", publisher="ACME"
+            ),
+        )
+
+    def test_the_inno_script_carries_the_metadata(self) -> None:
+        from ece_autocompiler.packaging.formats.windows import InnoSetupFormat
+
+        script = InnoSetupFormat().script_text(
+            self.staging, self.request, self.tmp / "out" / "demo-setup.exe"
+        )
+        self.assertIn("AppName=Demo App", script)
+        self.assertIn("AppVersion=1.2.0", script)
+        self.assertIn("AppDescription=A demo", script)
+        self.assertIn("AppPublisher=ACME", script)
+        self.assertIn("[Files]", script)
+        self.assertIn("[Run]", script)
+
+    def test_the_inno_icon_directives_are_in_the_setup_section(self) -> None:
+        from ece_autocompiler.packaging.formats.windows import InnoSetupFormat
+
+        script = InnoSetupFormat().script_text(
+            self.staging, self.request, self.tmp / "out" / "demo-setup.exe"
+        )
+        setup_section = script.split("[Files]")[0]
+        self.assertIn("SetupIconFile=", setup_section)
+        self.assertIn("UninstallDisplayIcon=", setup_section)
+
+    def test_the_nsis_script_carries_the_metadata_and_the_icon(self) -> None:
+        from ece_autocompiler.packaging.formats.windows import NsisFormat
+
+        script = NsisFormat().script_text(
+            self.staging, self.request, self.tmp / "out" / "demo-setup.exe"
+        )
+        self.assertIn('!define APPNAME "Demo App"', script)
+        self.assertIn('!define APPVERSION "1.2.0"', script)
+        self.assertIn("!define MUI_ICON ", script)
+        self.assertIn('Section "Install"', script)
+
+
 class FormatRegistryTests(unittest.TestCase):
     def test_every_format_is_described(self) -> None:
         described = describe_formats()
