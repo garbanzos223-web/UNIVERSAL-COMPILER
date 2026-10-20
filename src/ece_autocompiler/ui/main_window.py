@@ -529,6 +529,9 @@ class MainWindow(ttk.Frame):
         self.ece_opts.grid_forget()
         self.exe_opts.grid_forget()
         (self.exe_opts if is_exe else self.ece_opts).grid(row=0, column=0, sticky="w")
+        # The optimization profile only applies to the .ece build.
+        if hasattr(self, "profile_box"):
+            self.profile_box.configure(state="disabled" if is_exe else "readonly")
         # Rewrite a default-looking output path when it ends with the old ext.
         path = self.project_row.var.get().strip()
         out = self.output_var.get().strip()
