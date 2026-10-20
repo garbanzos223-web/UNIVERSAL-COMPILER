@@ -223,10 +223,17 @@ existing build plan.
 
 | Toolchain | What is changed |
 | --- | --- |
-| CMake | `-DCMAKE_BUILD_TYPE=<type>`, `-DCMAKE_C_FLAGS` / `-DCMAKE_CXX_FLAGS`, `--config <type>` |
+| CMake | `-DCMAKE_BUILD_TYPE=<type>`, `-DCMAKE_C_FLAGS` / `-DCMAKE_CXX_FLAGS`, `-DCMAKE_EXE_LINKER_FLAGS`, `--config <type>` |
 | Cargo | `--release` (or removed for `debug`), `CARGO_PROFILE_RELEASE_*` environment variables |
 | Go | `-trimpath`, `-gcflags=all=-N -l` (debug), `-ldflags=-s -w` (size) |
 | .NET | `-c <Debug|Release>`, `-p:TieredPGO=true`, `-p:PublishTrimmed=true`, ... |
+
+The C/C++ options follow the compiler that is really installed: GCC/Clang get
+`-ffunction-sections -fdata-sections` and `-Wl,--gc-sections` for the size
+profile (dead-code elimination), MSVC gets `/Gy /Gw` and `/OPT:REF`, and the
+release/debug options are translated (`-O2` becomes `/O2`, `-DNDEBUG` becomes
+`/DNDEBUG`). With no compiler found, the compiler-specific options are left
+out and the profile says so.
 
 Conflicting options are reported, not silently applied: two different `-O`
 levels, `-g` in an optimized build, stripping symbols while keeping debug

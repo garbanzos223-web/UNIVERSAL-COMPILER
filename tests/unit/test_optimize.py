@@ -216,6 +216,81 @@ class ApplyOptimizationTests(unittest.TestCase):
         self.assertEqual(plan.steps[0].cmd_args, ["cmake", "-S", ".", "-B", "build"])
 
 
+class CompilerAwareTests(unittest.TestCase):
+    """The flags must fit the compiler that is really installed."""
+
+    def _tools(self, **found):
+        from ece_autocompiler.detection.toolchains import ToolInfo
+
+        def side_effect(tool_id):
+            is_found = found.get(tool_id, False)
+            return ToolInfo(
+                id=tool_id, name=tool_id, found=is_found,
+                path=f"{tool_id}.exe" if is_found else None, version="1.0",
+            )
+
+        return side_effect
+
+    def test_gcc_gets_section_flags_for_the_size_profile(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", side_effect=self._tools(gcc=True)
+        ):
+            plan = build_optimization_plan(
+                "cpp-cmake", OptimizationRequest.from_args("size")
+            )
+        self.assertIn("-ffunction-sections", plan.flags)
+        self.assertIn("-Wl,--gc-sections", plan.linker_flags)
+
+    def test_msvc_gets_its_own_options(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", side_effect=self._tools(cl=True)
+        ):
+            plan = build_optimization_plan(
+                "cpp-cmake", OptimizationRequest.from_args("size")
+            )
+        self.assertIn("/Gy", plan.flags)
+        self.assertIn("/OPT:REF", plan.linker_flags)
+        # No GCC option may reach MSVC.
+        self.assertFalse(any(flag.startswith("-O") for flag in plan.flags))
+        self.assertFalse(any(flag.startswith("-D") for flag in plan.flags))
+
+    def test_without_a_compiler_the_specific_options_are_left_out(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", side_effect=self._tools()
+        ):
+            plan = build_optimization_plan(
+                "cpp-cmake", OptimizationRequest.from_args("size")
+            )
+        self.assertFalse(any("gc-sections" in flag for flag in plan.linker_flags))
+        self.assertTrue(any("No C/C++ compiler" in note for note in plan.notes))
+
+    def test_the_performance_profile_enables_link_time_optimization(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", side_effect=self._tools(gcc=True)
+        ):
+            plan = build_optimization_plan(
+                "cpp-cmake", OptimizationRequest.from_args("performance")
+            )
+        self.assertIn(
+            "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE", plan.properties
+        )
+
+    def test_the_linker_flags_reach_the_cmake_step(self) -> None:
+        plan = _plan(
+            [BuildPlanStep(id="cmake-configure", title="cmake", cmd_args=["cmake", "-S", ".", "-B", "build"])]
+        )
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", side_effect=self._tools(gcc=True)
+        ):
+            optimization = build_optimization_plan(
+                "cpp-cmake", OptimizationRequest.from_args("size")
+            )
+        apply_optimization(plan, optimization)
+        self.assertTrue(
+            any(a.startswith("-DCMAKE_EXE_LINKER_FLAGS=") for a in plan.steps[0].cmd_args)
+        )
+
+
 class MeasurementTests(unittest.TestCase):
     def test_percentage_change_is_computed(self) -> None:
         report = compare(

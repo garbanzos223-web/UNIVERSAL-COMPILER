@@ -46,6 +46,7 @@ class OptimizationPlan:
     title: str = "Default (no override)"
     family: str = ""
     flags: list[str] = field(default_factory=list)
+    linker_flags: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     properties: list[str] = field(default_factory=list)
     build_type: str = ""
@@ -68,6 +69,7 @@ class OptimizationPlan:
             "title": self.title,
             "family": self.family,
             "flags": list(self.flags),
+            "linker_flags": list(self.linker_flags),
             "env": dict(self.env),
             "properties": list(self.properties),
             "build_type": self.build_type,
@@ -91,6 +93,8 @@ class OptimizationPlan:
             return "\n".join(lines)
         if self.flags:
             lines.append(f"  Flags      : {' '.join(self.flags)}")
+        if self.linker_flags:
+            lines.append(f"  Linker     : {' '.join(self.linker_flags)}")
         if self.build_type:
             lines.append(f"  Build type : {self.build_type}")
         if self.cargo_profile:
@@ -133,6 +137,25 @@ def _detect_conflicts(flags: list[str], profile_key: str) -> list[str]:
     if "-flto" in joined and profile_key == "debug":
         warnings.append("Link-time optimization slows the build down; it is unusual in a debug build.")
     return warnings
+
+
+def detect_compiler_family() -> str:
+    """Which C/C++ compiler this machine would use: gcc, clang, msvc or unknown.
+
+    The flags of a profile depend on it: MSVC does not understand
+    ``-ffunction-sections``, and GCC does not understand ``/Gy``.
+    """
+    from ..detection import get_tool
+
+    def _found(tool_id: str) -> bool:
+        info = get_tool(tool_id)
+        return bool(info and info.found)
+
+    if _found("gcc") or _found("clang"):
+        return "gcc"
+    if _found("cl"):
+        return "msvc"
+    return "unknown"
 
 
 def _toolchain_warnings(adapter_id: str, optimization: OptimizationPlan) -> list[str]:
@@ -202,6 +225,69 @@ def _toolchain_warnings(adapter_id: str, optimization: OptimizationPlan) -> list
     return warnings
 
 
+#: GCC/Clang options translated to their MSVC equivalent.
+_MSVC_TRANSLATION: dict[str, str] = {
+    "-O0": "/Od",
+    "-O1": "/O1",
+    "-O2": "/O2",
+    "-O3": "/O2",
+    "-Os": "/O1",
+    "-g": "/Zi",
+    "-DNDEBUG": "/DNDEBUG",
+}
+
+
+def _translate_to_msvc(flags: list[str]) -> list[str]:
+    """Translate GCC-style options to the MSVC ones."""
+    translated: list[str] = []
+    for flag in flags:
+        translated.append(_MSVC_TRANSLATION.get(flag, flag))
+    return translated
+
+
+def _apply_compiler_specific_options(plan: OptimizationPlan) -> None:
+    """Add the options that only work with the compiler that is installed.
+
+    Dead-code elimination and link-time optimization need different flags for
+    GCC/Clang and for MSVC, and using the wrong ones is a build failure.
+    """
+    compiler = detect_compiler_family()
+    if compiler == "unknown":
+        plan.notes.append(
+            "No C/C++ compiler was found, so the compiler-specific options "
+            "(dead-code elimination, link-time optimization) were left out."
+        )
+        return
+
+    if compiler == "msvc":
+        plan.flags = _translate_to_msvc(plan.flags)
+
+    if plan.profile == "size":
+        if compiler == "gcc":
+            # Section per function and per variable, then drop the unused
+            # sections at link time.
+            plan.flags.extend(["-ffunction-sections", "-fdata-sections"])
+            plan.linker_flags.append("-Wl,--gc-sections")
+            plan.notes.append(
+                "Dead-code elimination: sections per function (-ffunction-sections) "
+                "and unused sections dropped at link time (-Wl,--gc-sections)."
+            )
+        else:
+            # MSVC: function-level linking and global data optimization.
+            plan.flags.extend(["/Gy", "/Gw"])
+            plan.linker_flags.append("/OPT:REF")
+            plan.notes.append(
+                "Dead-code elimination: function-level linking (/Gy) and "
+                "unreferenced symbols removed (/OPT:REF)."
+            )
+    elif plan.profile == "performance":
+        plan.properties.append("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE")
+        plan.notes.append(
+            "Link-time optimization is enabled through CMake "
+            "(-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=TRUE)."
+        )
+
+
 def build_optimization_plan(
     adapter_id: str,
     request: OptimizationRequest | None = None,
@@ -267,6 +353,8 @@ def build_optimization_plan(
 
     plan.warnings.extend(_detect_conflicts(plan.flags, key))
     plan.warnings.extend(_toolchain_warnings(adapter_id, plan))
+    if family == "cmake":
+        _apply_compiler_specific_options(plan)
     if plan.requires_approval:
         plan.notes.append(
             "This profile enables options that can change program behaviour "
@@ -316,6 +404,15 @@ def _apply_cmake(step: BuildPlanStep, plan: OptimizationPlan) -> bool:
             args.append(f"-DCMAKE_C_FLAGS={joined}")
         if "-DCMAKE_CXX_FLAGS=" not in args:
             args.append(f"-DCMAKE_CXX_FLAGS={joined}")
+    if plan.linker_flags:
+        joined = " ".join(plan.linker_flags)
+        if "-DCMAKE_EXE_LINKER_FLAGS=" not in args:
+            args.append(f"-DCMAKE_EXE_LINKER_FLAGS={joined}")
+        if "-DCMAKE_SHARED_LINKER_FLAGS=" not in args:
+            args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={joined}")
+    for prop in plan.properties:
+        if prop.startswith("-D") and prop not in args:
+            args.append(prop)
     step.cmd_args = args
     return True
 
