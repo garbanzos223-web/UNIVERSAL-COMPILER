@@ -376,9 +376,9 @@ A test runs the probe twice.
 
 | | |
 | --- | --- |
-| Tests | **419 pass**, 1 skipped (unit, integration, GUI smoke) |
+| Tests | **424 pass**, 1 skipped (unit, integration, GUI smoke) |
 | Lint | `tools/lint_stdlib.py`: **85 files clean** |
-| Commits since the 1.2 release | 15 |
+| Commits since the 1.2 release | 20 |
 | Release build | rebuilt and verified (`build_exe.ps1` + `release_check.py`) |
 
 ### Remaining work (not done here)

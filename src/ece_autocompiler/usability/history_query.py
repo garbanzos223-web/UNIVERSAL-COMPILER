@@ -124,13 +124,16 @@ def replay_command(record: Any, *, executable: str = "ece-autocompiler") -> str:
     data = _as_dict(record)
     project = str(data.get("project_path", "") or ".")
     mode = str(data.get("mode", "ece") or "ece")
+    profile = str(data.get("profile", "") or "")
     if mode == "exe":
         return f'{executable} exe "{project}"'
     if mode == "package":
         fmt = str(data.get("format", "") or "")
         suffix = f" --format {fmt}" if fmt else ""
         return f'{executable} package "{project}"{suffix}'
-    profile = str(data.get("profile", "") or "")
+    if mode == "optimize":
+        suffix = f" --profile {profile}" if profile and profile != "none" else ""
+        return f'{executable} optimize "{project}"{suffix}'
     suffix = f" --profile {profile}" if profile and profile != "none" else ""
     return f'{executable} build "{project}"{suffix}'
 

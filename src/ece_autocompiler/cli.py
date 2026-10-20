@@ -986,6 +986,28 @@ def cmd_optimize(args) -> int:
     advice = recommendations(adapter_guess, optimization, report)
     record_optimization(cfg.work_dir, report)
 
+    from .build.history import append as history_append, make_record
+
+    history_append(
+        make_record(
+            root,
+            ok=optimized.ok,
+            exit_code=0 if optimized.ok else EXIT_ERROR,
+            duration_seconds=optimized.compile_seconds,
+            adapter_id=adapter_guess,
+            mode="optimize",
+            artifact_count=optimized.file_count,
+            message=(
+                f"Optimization comparison ({optimization.profile}): "
+                f"build {report.time_change_pct}%, size {report.size_change_pct}%"
+                if report.time_change_pct is not None and report.size_change_pct is not None
+                else f"Optimization comparison ({optimization.profile})"
+            ),
+            profile=optimization.profile,
+        ),
+        base=cfg.work_dir,
+    )
+
     if _wants_json(args):
         payload = report.as_dict()
         payload["optimization"] = optimization.as_dict()

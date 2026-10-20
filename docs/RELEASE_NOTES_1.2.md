@@ -97,7 +97,7 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 
 ## Verified
 
-- 419 tests pass (1 skipped), including unit, integration and GUI smoke tests.
+- 424 tests pass (1 skipped), including unit, integration and GUI smoke tests.
 - `python tools/lint_stdlib.py` reports 85 files clean.
 - The release build was verified with `scripts\build_exe.ps1`: both binaries
   were rebuilt, the desktop build starts and stays alive, and the **console

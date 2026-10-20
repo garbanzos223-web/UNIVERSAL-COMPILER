@@ -337,6 +337,16 @@ class HistoryQueryTests(unittest.TestCase):
         plain = dict(record, profile="none")
         self.assertNotIn("--profile", history_query.replay_command(plain))
 
+    def test_replay_command_covers_the_optimize_mode(self) -> None:
+        record = {
+            "timestamp": "2026-01-05T00:00:00Z", "project_path": "C:/e",
+            "adapter_id": "cpp-cmake", "mode": "optimize", "ok": True,
+            "profile": "size", "message": "Optimization comparison",
+        }
+        command = history_query.replay_command(record)
+        self.assertIn("optimize", command)
+        self.assertIn("--profile size", command)
+
     def test_summary_counts_failures_honestly(self) -> None:
         stats = history_query.summarize(self.RECORDS)
         self.assertEqual(stats["total"], 2)
