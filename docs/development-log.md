@@ -203,6 +203,42 @@ re-read the in-process cache before).
 
 ---
 
+## Session: release build verified with the new features
+
+**Goal.** Prove that the shipped executables really contain the new
+subsystems and that they work, instead of trusting that the build succeeded.
+
+### What was done
+
+- `scripts\build_exe.ps1` was run from scratch: both binaries were rebuilt
+  (`dist\ECE-AutoCompiler.exe`, 10.95 MB, and
+  `dist\ECE-AutoCompiler-cli.exe`, 10.98 MB).
+- `tools\release_check.py` now includes a **functional probe**: the shipped
+  console build has to build a throwaway project, validate the container deeply
+  and create a real ZIP package with its manifest. The probe runs with
+  `ECE_AUTOCOMPILER_HOME` pointing at a temporary folder, so it never touches
+  the real application data.
+- The probe passed:
+  `built demo.ece (658 bytes); validated the container (deep); packaged demo-1.0.0.zip with its manifest`.
+- The frozen console build was also exercised by hand with the new commands:
+  `package` produced and verified a ZIP, and `repair --apply` parsed a real
+  syntax error, proposed the missing colon with a diff, applied it, rebuilt
+  the project and kept the change.
+
+### Tests executed
+
+- `python -m unittest discover -s tests -t .` -> **392 tests, OK (skipped=1)**.
+- `python tools/lint_stdlib.py` -> **85 files clean**.
+- `powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1` -> both
+  binaries built and verified.
+
+### Notes
+
+- The `dist\` binaries are build artifacts and are not committed. They are now
+  current with the 1.2 source tree and can be attached to the release.
+
+---
+
 ## Session: 1.2 usability release (40 improvements)
 
 See [docs/RELEASE_NOTES_1.2.md](RELEASE_NOTES_1.2.md) for the user-facing

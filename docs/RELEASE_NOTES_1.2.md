@@ -49,12 +49,47 @@ network call is required. Runtime is Python standard library only; Windows
   lists them with the reason each was detected and lets you choose which one to
   build.
 
+## Also new in this release: packaging, repair and optimization
+
+Three subsystems were added on top of the usability work
+([docs/ADVANCED_FEATURES.md](ADVANCED_FEATURES.md)):
+
+- **Distributable packages.** `ece-autocompiler package` produces real,
+  verified packages: reproducible ZIP and TAR.GZ archives, an application
+  folder, a Windows installer (Inno Setup or NSIS) and the Linux formats (DEB,
+  AppImage) when their tooling is installed. Every package carries a
+  `package-manifest.json` with the metadata, the file list and SHA-256
+  checksums, and it is **read back and verified** before it is reported as
+  successful. Missing runtime dependencies and copyleft licenses are reported,
+  never hidden.
+- **Automatic error analysis and repair.** `ece-autocompiler repair` parses
+  the compiler output (GCC/Clang, MSVC, Cargo, Go, Python, javac, TypeScript
+  and linker errors), groups the problems into root causes and applies the
+  deterministic fixes it is sure about: a missing `:`, a missing `#include`, an
+  unused Go import, a missing `using`/`import`. Every change is backed up,
+  rebuilt, verified and **rolled back** when it does not fix the error; the
+  diff is always shown and every attempt is journalled.
+- **Intelligent optimization.** `ece-autocompiler optimize` builds the project
+  twice - baseline and optimized - and reports only what it measured: a
+  percentage needs two real numbers and a runtime claim needs a benchmark.
+  Profiles: `debug`, `release`, `performance`, `size`, `balanced`, `custom`;
+  the default `none` keeps the previous behaviour exactly. The window gains a
+  **Profile** selector, a package dialog, an optimization comparison dialog
+  and an **Attempt automatic repair** action in the failure dialog.
+
+The command line also starts faster: the toolchain probe result is cached
+locally for 15 minutes and dropped when `PATH` changes (`tools` went from
+~1.4 s to ~0.2 s here; `tools --refresh` re-probes on demand).
+
 ## New commands
 
 ```text
 ece-autocompiler plan <project> [--mode ece|exe] [--adapter ID] [--json]
-ece-autocompiler build <project> [--plan] [--package-only] [--json] [--quiet] [--no-progress] [--no-input]
-ece-autocompiler doctor [--json] [--tools python,node,cmake]
+ece-autocompiler build <project> [--plan] [--package-only] [--profile NAME] [--repair] [--json] [--quiet] [--no-progress] [--no-input]
+ece-autocompiler package <project> [--format zip|tar.gz|folder|inno|nsis|deb|appimage] [--output-dir DIR] [--build] [--consent] [--json]
+ece-autocompiler optimize <project> [--profile NAME] [--custom-flags FLAG] [--tests CMD] [--benchmark CMD] [--json]
+ece-autocompiler repair <project> [--apply] [--max-attempts N] [--timeout SEC] [--tests CMD] [--json]
+ece-autocompiler doctor [--json] [--tools python,node,cmake] [--refresh]
 ece-autocompiler diff <old.ece> <new.ece> [--json]
 ece-autocompiler init <folder> [--template python-script|python-package|node-app|cpp-cmake] [--list]
 ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--export records.json] [--export-csv records.csv] [--replay] [--json]
@@ -62,11 +97,18 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 
 ## Verified
 
-- 284 tests pass (1 skipped), including unit, integration and GUI smoke tests.
-- `python tools/lint_stdlib.py` reports 58 files clean.
+- 392 tests pass (1 skipped), including unit, integration and GUI smoke tests.
+- `python tools/lint_stdlib.py` reports 85 files clean.
+- The release build was verified with `scripts\build_exe.ps1`: both binaries
+  were rebuilt, the desktop build starts and stays alive, and the **console
+  build really built a project, validated the container deeply and created a
+  ZIP package with its manifest** (`tools\release_check.py`).
 - A real Python build was verified end to end: the first build took 1.266 s;
   the second used that estimate (1.625 s actual, 28% slower) and recorded it
   locally.
+- The automatic repair was verified end to end on a project with a real syntax
+  error: the error was parsed, the missing colon was proposed with a diff, the
+  change was applied, the project was rebuilt and the repair was kept.
 
 ## Notes and limits
 
