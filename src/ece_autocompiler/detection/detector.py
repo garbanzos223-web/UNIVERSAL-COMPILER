@@ -48,6 +48,13 @@ ADAPTER_LABELS = {
     "unity": "Unity",
 }
 
+#: Source suffix -> language, built once from ``SOURCE_HINTS`` so the scan
+#: needs one dictionary lookup per file instead of one comparison per language.
+_SUFFIX_TO_LANGUAGE: dict[str, str] = {}
+for _language, _extensions in SOURCE_HINTS.items():
+    for _extension in _extensions:
+        _SUFFIX_TO_LANGUAGE.setdefault(_extension, _language)
+
 
 @dataclass
 class ScanResult:
@@ -81,9 +88,15 @@ class ScanResult:
 
 
 def _relative(root: Path, path: Path) -> str:
+    """The path of *path* relative to *root*, with forward slashes.
+
+    ``os.path.relpath`` is used instead of ``Path.relative_to`` because it is
+    a plain string operation: the scan calls this once per file, and the
+    pathlib version dominated the scan time on large trees.
+    """
     try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
+        return os.path.relpath(str(path), str(root)).replace("\\", "/")
+    except ValueError:  # different drives on Windows
         return path.as_posix()
 
 
@@ -106,19 +119,48 @@ def _walk(root: Path, limits: Limits) -> tuple[list[str], set[str], int, bool]:
         rel_dir = _relative(root, current_path)
         if rel_dir != ".":
             directories.add(rel_dir)
+            prefix = rel_dir + "/"
+        else:
+            prefix = ""
 
         for name in filenames:
             if len(files) >= limits.max_scan_files:
                 truncated = True
                 return files, directories, len(files), truncated
-            files.append(_relative(root, current_path / name))
+            files.append(prefix + name)
 
     return files, directories, len(files), truncated
 
 
-def _match_markers(directory_files: list[str]) -> list[tuple[Marker, str]]:
+def _directory_index(directory_files: list[str]) -> tuple[set[str], dict[str, str]]:
+    """Index the files of one directory for fast marker matching.
+
+    Returns the lowercased names present and a map from every suffix (and
+    from the whole name) to the first file that has it. Building this once per
+    directory instead of once per marker is what makes the scan linear in the
+    number of files instead of files times markers.
+    """
+    names: set[str] = set()
+    by_suffix: dict[str, str] = {}
+    for entry in directory_files:
+        base = os.path.basename(entry)
+        lowered = base.lower()
+        names.add(lowered)
+        by_suffix.setdefault(lowered, base)
+        suffix = os.path.splitext(lowered)[1]
+        if suffix:
+            by_suffix.setdefault(suffix, base)
+    return names, by_suffix
+
+
+def _match_markers(
+    directory_files: list[str],
+    names_present: set[str] | None = None,
+    by_suffix: dict[str, str] | None = None,
+) -> list[tuple[Marker, str]]:
     """Return (marker, evidence_file) for every marker matching this directory."""
-    names_present = {os.path.basename(f).lower() for f in directory_files}
+    if names_present is None or by_suffix is None:
+        names_present, by_suffix = _directory_index(directory_files)
     matched: list[tuple[Marker, str]] = []
 
     for marker in MARKERS:
@@ -126,16 +168,13 @@ def _match_markers(directory_files: list[str]) -> list[tuple[Marker, str]]:
         if marker.names:
             for name in marker.names:
                 if name in names_present:
-                    hit = name
+                    hit = by_suffix.get(name, name)
                     break
         if hit is None and marker.suffixes:
-            for f in directory_files:
-                lower = os.path.basename(f).lower()
-                for suffix in marker.suffixes:
-                    if lower.endswith(suffix):
-                        hit = os.path.basename(f)
-                        break
-                if hit:
+            for suffix in marker.suffixes:
+                found = by_suffix.get(suffix)
+                if found:
+                    hit = found
                     break
         if hit is None:
             continue
@@ -230,8 +269,8 @@ def scan(
 
     # Manifest / marker detections.
     for directory, dir_files in by_dir.items():
-        matches = _match_markers(dir_files)
-        names_present = {os.path.basename(f).lower() for f in dir_files}
+        names_present, by_suffix = _directory_index(dir_files)
+        matches = _match_markers(dir_files, names_present, by_suffix)
         for marker, evidence in matches:
             key = (marker.adapter_id, directory)
             evidence_path = f"{directory}/{evidence}" if directory else evidence
@@ -291,10 +330,11 @@ def _detect_by_sources(root: Path, by_dir: dict[str, list[str]]) -> dict[tuple[s
     for directory, dir_files in by_dir.items():
         counts: dict[str, int] = {}
         for rel in dir_files:
-            suffix = Path(rel).suffix.lower()
-            for language, extensions in SOURCE_HINTS.items():
-                if suffix in extensions:
-                    counts[language] = counts.get(language, 0) + 1
+            # One dictionary lookup per file instead of one comparison per
+            # language: this runs on every file of a large tree.
+            language = _SUFFIX_TO_LANGUAGE.get(os.path.splitext(rel)[1].lower())
+            if language:
+                counts[language] = counts.get(language, 0) + 1
         if not counts:
             continue
         language = max(counts, key=lambda k: counts[k])

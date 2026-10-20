@@ -91,7 +91,9 @@ is implemented in 1.2. The short version:
 - **The commands start fast.** Toolchain probing costs one process per tool,
   so the result is cached locally for 15 minutes and dropped automatically when
   `PATH` changes. `tools` went from ~1.4 s to ~0.2 s; `doctor` from ~1.4 s to
-  ~0.2 s. `tools --refresh` / `doctor --refresh` re-probe on demand.
+  ~0.2 s. `tools --refresh` / `doctor --refresh` re-probe on demand. The
+  project scan itself was rewritten to do the work once per folder instead of
+  once per file: on a tree with 3000 files it went from 207 ms to 39 ms.
 
 ### Beyond the 40: packaging, repair and optimization
 

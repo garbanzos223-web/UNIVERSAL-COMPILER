@@ -44,6 +44,24 @@ class DetectionTests(unittest.TestCase):
         root = _project({"CMakeLists.txt": "project(x)"})
         self.assertIn("cpp-cmake", [c.adapter_id for c in scan(root).candidates])
 
+    def test_the_evidence_names_the_real_file(self) -> None:
+        # The evidence is shown to the user ("why this was detected"), so it
+        # has to keep the case of the file that is really on disk.
+        root = _project({"CMakeLists.txt": "project(x)"})
+        candidate = next(c for c in scan(root).candidates if c.adapter_id == "cpp-cmake")
+        self.assertIn("CMakeLists.txt", candidate.evidence)
+
+    def test_a_source_file_is_detected_by_its_extension(self) -> None:
+        root = _project({"a.cpp": "int main(){}", "b.cpp": "int f(){}", "c.cpp": "int g(){}"})
+        ids = [c.adapter_id for c in scan(root).candidates]
+        self.assertIn("cpp-cmake", ids)
+
+    def test_the_scan_finds_every_file(self) -> None:
+        files = {f"pkg{i}/mod{j}.py": "x = 1\n" for i in range(5) for j in range(20)}
+        root = _project(files)
+        result = scan(root)
+        self.assertEqual(result.total_files, len(files))
+
     def test_rust(self) -> None:
         root = _project({"Cargo.toml": '[package]\nname="x"'})
         self.assertIn("rust-cargo", [c.adapter_id for c in scan(root).candidates])

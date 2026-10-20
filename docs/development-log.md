@@ -266,6 +266,50 @@ class.
 
 ---
 
+## Session: the project scan was 5x slower than it had to be
+
+**Goal.** Profile the command line on a large tree and remove the avoidable
+work.
+
+### Measurement
+
+A synthetic project with 3000 Python files in 60 folders:
+
+| Phase | Before | After |
+| --- | --- | --- |
+| `scan()` (detection) | 207 ms | **39 ms** |
+| full `build` (warm) | 808 ms | **430 ms** |
+
+The raw `os.walk` of the same tree takes 8 ms, so the detection logic - not the
+disk - was the bottleneck.
+
+### What was wrong
+
+- `_relative()` used `Path.relative_to()`, which is a pure-Python pathlib
+  operation and was called once per file (3063 calls, ~180 µs each).
+  `os.path.relpath()` does the same job as a string operation.
+- `_walk()` rebuilt the relative path of every file from scratch; the
+  directory prefix is now computed once per folder.
+- `_match_markers()` rebuilt the set of file names of a directory **for every
+  marker** (30 markers x 60 folders). The names and suffixes of a folder are
+  now indexed once.
+- `_detect_by_sources()` compared every file against every language's suffix
+  list (14 comparisons per file). There is now one dictionary lookup per
+  file.
+
+### Behaviour that changed on purpose
+
+The evidence of a detection now shows the **real file name** with its original
+case (`CMakeLists.txt` instead of `cmakelists.txt`), because the index keeps
+the original name next to the lowercased one.
+
+### Tests executed
+
+- `python -m unittest discover -s tests -t .` -> **406 tests, OK (skipped=1)**.
+- `python tools/lint_stdlib.py` -> **85 files clean**.
+
+---
+
 ## Session: 1.2 usability release (40 improvements)
 
 See [docs/RELEASE_NOTES_1.2.md](RELEASE_NOTES_1.2.md) for the user-facing
