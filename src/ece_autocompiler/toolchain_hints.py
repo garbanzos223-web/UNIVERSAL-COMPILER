@@ -104,6 +104,12 @@ HINTS: dict[str, InstallHint] = {
             url="https://github.com/ninja-build/ninja/releases",
         ),
         InstallHint(
+            "meson", "Meson",
+            winget="mesonbuild.Meson", choco="meson", scoop="meson",
+            url="https://mesonbuild.com/",
+            note="needed to configure a Meson project (ninja builds it)",
+        ),
+        InstallHint(
             "gcc", "MinGW-w64 (GCC)",
             winget="BrechtSanders.WinLibs.POSIX.UCRT", choco="mingw", scoop="mingw",
             url="https://www.mingw-w64.org/downloads/",

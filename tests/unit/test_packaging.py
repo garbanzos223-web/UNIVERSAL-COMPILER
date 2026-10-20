@@ -247,6 +247,14 @@ class CollectionHelperTests(unittest.TestCase):
         self.assertTrue(is_system_path(Path("/usr/lib/libc.so")))
         self.assertFalse(is_system_path(Path("C:/projects/app/dist/app.exe")))
 
+    def test_a_project_folder_named_like_a_system_folder_is_not_system(self) -> None:
+        # Only the real system roots count; a project that lives in a folder
+        # called "Program Files Development" is a normal project.
+        self.assertFalse(
+            is_system_path(Path("C:/Users/dev/Program Files Development/app.exe"))
+        )
+        self.assertFalse(is_system_path(Path("/home/dev/windows/app.exe")))
+
 
 class LicenseTests(unittest.TestCase):
     def test_license_classification(self) -> None:

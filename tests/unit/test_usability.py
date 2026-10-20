@@ -317,6 +317,26 @@ class HistoryQueryTests(unittest.TestCase):
         self.assertIn("build", history_query.replay_command(self.RECORDS[0]))
         self.assertIn("exe", history_query.replay_command(self.RECORDS[1]))
 
+    def test_replay_command_covers_the_package_mode(self) -> None:
+        record = {
+            "timestamp": "2026-01-03T00:00:00Z", "project_path": "C:/c",
+            "adapter_id": "python", "mode": "package", "ok": True,
+            "format": "tar.gz", "message": "Package created",
+        }
+        command = history_query.replay_command(record)
+        self.assertIn("package", command)
+        self.assertIn("--format tar.gz", command)
+
+    def test_replay_command_keeps_the_optimization_profile(self) -> None:
+        record = {
+            "timestamp": "2026-01-04T00:00:00Z", "project_path": "C:/d",
+            "adapter_id": "cpp-cmake", "mode": "ece", "ok": True,
+            "profile": "release", "message": "Build and package succeeded",
+        }
+        self.assertIn("--profile release", history_query.replay_command(record))
+        plain = dict(record, profile="none")
+        self.assertNotIn("--profile", history_query.replay_command(plain))
+
     def test_summary_counts_failures_honestly(self) -> None:
         stats = history_query.summarize(self.RECORDS)
         self.assertEqual(stats["total"], 2)

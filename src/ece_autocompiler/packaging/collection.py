@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 from pathlib import Path
 
 from ..adapters.base import Artifact
@@ -46,12 +47,17 @@ DEFAULT_EXCLUDES: tuple[str, ...] = (
     "*.swp",
 )
 
-#: Windows and POSIX locations whose files are installed by the operating
-#: system or by another application: bundling them breaks the target machine.
-_SYSTEM_MARKERS = (
-    "windows",
-    "program files",
-    "program files (x86)",
+#: Windows system locations. Bundling them breaks the target machine: they
+#: belong to the operating system or to another installed application.
+_WINDOWS_SYSTEM_ROOTS: tuple[str, ...] = (
+    "\\windows",
+    "\\program files",
+    "\\program files (x86)",
+    "\\programdata",
+)
+
+#: POSIX system locations (matched at the root of the path).
+_POSIX_SYSTEM_ROOTS: tuple[str, ...] = (
     "/usr/",
     "/bin/",
     "/sbin/",
@@ -66,13 +72,26 @@ _EXECUTABLE_SUFFIXES = (".exe", ".com", ".bat", ".cmd", ".sh", ".py", ".jar", ".
 
 
 def is_system_path(path: Path) -> bool:
-    """True when *path* points at an operating-system or system-wide location."""
+    """True when *path* points at an operating-system or system-wide location.
+
+    Only the real system roots count. A project that happens to live in a
+    folder called "Program Files Development" is still a normal project.
+    """
+    raw = str(path).replace("\\", "/")
+    if raw.startswith(_POSIX_SYSTEM_ROOTS):
+        return True
     try:
         resolved = path.resolve()
     except OSError:
         resolved = path
-    text = str(resolved).replace("\\", "/").lower()
-    return any(marker in text for marker in _SYSTEM_MARKERS)
+    text = str(resolved).replace("/", "\\")
+    drive = os.environ.get("SystemDrive", "C:").replace("/", "\\").rstrip("\\").lower()
+    lowered = text.lower()
+    for root in _WINDOWS_SYSTEM_ROOTS:
+        marker = f"{drive}{root}"
+        if lowered.startswith(marker + "\\") or lowered == marker:
+            return True
+    return False
 
 
 def matches_any(rel_path: str, patterns: list[str] | tuple[str, ...]) -> bool:

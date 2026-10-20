@@ -145,6 +145,7 @@ class AdvancedPackager:
 
         # --- detect and build ------------------------------------------
         from ..build import BuildOrchestrator
+        from ..errors import ConfigurationError
 
         orchestrator = BuildOrchestrator(config=self.config)
         try:
@@ -155,6 +156,15 @@ class AdvancedPackager:
                 progress=progress,
                 package_only=not request.run_build,
             )
+        except ConfigurationError as exc:
+            result.message = f"The project could not be prepared: {exc}"
+            result.errors.append(str(exc))
+            if "consent" in str(exc).lower():
+                result.errors.append(
+                    "Allow the project scripts (consent) and run the packaging "
+                    "command again, or package what is already built without --build."
+                )
+            return result
         except Exception as exc:  # noqa: BLE001 - reported, never raised to the user
             result.message = f"The project could not be prepared: {exc}"
             result.errors.append(str(exc))

@@ -125,6 +125,84 @@ integrated into the CLI, the desktop window and the tests.
 
 ---
 
+## Session: advanced features, part 2 (correctness and performance)
+
+**Goal.** Review the new code for defects, fix the ones the tests and the
+measurements revealed, and remove the slowest avoidable work from the command
+line.
+
+### Correctness fixes
+
+- **System-library detection was a substring match.** A project in a folder
+  called `Program Files Development` was treated as a system file and left out
+  of the package. `is_system_path()` now compares against the real system
+  roots (`C:\Windows`, `C:\Program Files`, `/usr`, `/lib`, ...) and the POSIX
+  check runs on the original path, so it also works on Windows.
+- **A repair that could not be parsed counted as "resolved".** When the new
+  build failed with output the parsers did not understand, the engine kept the
+  change. It now rolls the change back: a repair that cannot be verified is
+  not a repair.
+- **`_run_tests` could raise `IndexError`** when the test command produced no
+  step result.
+- **The packager hid the consent error.** A C++/Node project that needs
+  consent now gets the same explanation as the build, with the suggestion to
+  package what is already built.
+- **The history could not replay a package run.** `BuildRecord` gained
+  `format` and `profile`, and `replay_command` now produces
+  `package "<path>" --format tar.gz` and `build "<path>" --profile release`
+  instead of always saying `build`.
+
+### Real functional gap fixed: the CMake adapter never built anything
+
+`_default_steps()` for `cpp-cmake` only *configured* the project
+(`cmake -S . -B build`). The build step was missing, so a C++ project was
+"built" without a single object file being compiled.
+
+- The plan now has `cmake-configure` **and** `cmake-build`
+  (`cmake --build build --config Release --parallel N`).
+- Both steps require consent: configuring runs the project's
+  `CMakeLists.txt`, which is project-controlled code.
+- `make` builds with `-j N`, and a Meson project is configured with
+  `meson setup` and built with `ninja -C build -j N`.
+- Meson is now a detected toolchain with its own install hint.
+
+### Performance: the toolchain probe cache
+
+Probing every tool starts one process per tool. Measured on this machine
+(`tools` command, warm file system):
+
+| Command | Before | After (cached) |
+| --- | --- | --- |
+| `tools` | 1392 ms | **173 ms** |
+| `doctor` | 1419 ms | **212 ms** |
+| `analyze` | 2029 ms | **765 ms** |
+
+The probe results are cached in
+`%LOCALAPPDATA%\ECE-Universal-AutoCompiler\config\toolchains.json` for 15
+minutes. The cache is dropped automatically when `PATH` changes (that is what
+happens when a tool is installed) and can always be dropped by hand:
+
+```powershell
+python -m ece_autocompiler tools --refresh
+python -m ece_autocompiler doctor --refresh
+```
+
+The **Rescan** button in the toolchain dialog now really re-probes (it only
+re-read the in-process cache before).
+
+### Tests executed
+
+- `python -m unittest discover -s tests -t .` -> **385 tests, OK (skipped=1)**.
+- `python tools/lint_stdlib.py` -> **84 files clean**.
+
+### Next recommended task
+
+- Add the package generator to `tools/release_check.py`.
+- Give the `.ece` container the same "verified package" treatment in the
+  release check.
+
+---
+
 ## Session: 1.2 usability release (40 improvements)
 
 See [docs/RELEASE_NOTES_1.2.md](RELEASE_NOTES_1.2.md) for the user-facing

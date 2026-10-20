@@ -26,7 +26,7 @@ class BuildRecord:
     project_path: str
     project_type: str = ""
     adapter_id: str = ""
-    mode: str = "ece"                 # "ece" or "exe"
+    mode: str = "ece"                 # "ece", "exe" or "package"
     ok: bool = False
     exit_code: int = -1
     duration_seconds: float = 0.0
@@ -35,6 +35,10 @@ class BuildRecord:
     sha256: str = ""
     message: str = ""
     diagnostics: list[str] = field(default_factory=list)
+    #: Package format used by a "package" run (empty for the other modes).
+    format: str = ""
+    #: Optimization profile used by the build ("" or "none" when not applied).
+    profile: str = ""
 
     @classmethod
     def from_dict(cls, raw: dict) -> "BuildRecord":
@@ -72,6 +76,8 @@ def make_record(
     sha256: str = "",
     message: str = "",
     diagnostics: list[str] | None = None,
+    format: str = "",
+    profile: str = "",
 ) -> BuildRecord:
     return BuildRecord(
         timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -87,6 +93,8 @@ def make_record(
         sha256=sha256,
         message=message,
         diagnostics=diagnostics or [],
+        format=format,
+        profile=profile,
     )
 
 

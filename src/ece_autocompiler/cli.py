@@ -173,10 +173,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tools = sub.add_parser("tools", help="List detected toolchains and what is missing.")
     p_tools.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_tools.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Probe every tool again instead of using the cached result.",
+    )
 
     p_doctor = sub.add_parser("doctor", help="Check whether this machine is ready to build.")
     p_doctor.add_argument("--tools", help="Comma-separated tool ids to check (default: all).")
     p_doctor.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_doctor.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Probe every tool again instead of using the cached result.",
+    )
 
     p_init = sub.add_parser("init", help="Create a new project from a template.")
     p_init.add_argument("path", nargs="?", help="Destination directory.")
@@ -715,6 +725,7 @@ def cmd_build(args) -> int:
             adapter_id=adapter_id, container_path=package.container_path,
             artifact_count=package.file_count, sha256=package.sha256, mode="ece",
             message="Build and package succeeded",
+            profile=getattr(args, "profile", "") or "",
         ),
         base=cfg.work_dir,
     )
@@ -810,6 +821,7 @@ def cmd_package(args) -> int:
             artifact_count=len(result.files),
             sha256=result.sha256,
             message=result.message or "Package created",
+            format=args.fmt,
         ),
         base=cfg.work_dir,
     )
@@ -1248,6 +1260,10 @@ def cmd_diff(args) -> int:
 
 
 def cmd_tools(args) -> int:
+    if getattr(args, "refresh", False):
+        from .detection import refresh
+
+        refresh()
     tools = discover_all()
     versions = {v.tool_id: v for v in toolchain_versions(list(tools.keys()))}
     if args.json:
@@ -1281,6 +1297,10 @@ def cmd_tools(args) -> int:
 def cmd_doctor(args) -> int:
     from .diagnostics.doctor import run_checks
 
+    if getattr(args, "refresh", False):
+        from .detection import refresh
+
+        refresh()
     tool_ids = None
     if args.tools:
         tool_ids = [t.strip() for t in args.tools.split(",") if t.strip()]

@@ -88,6 +88,10 @@ is implemented in 1.2. The short version:
 - **Everything stays local.** Config, history, logs, sidecars and templates live
   under `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\`; no database, no account, no
   network.
+- **The commands start fast.** Toolchain probing costs one process per tool,
+  so the result is cached locally for 15 minutes and dropped automatically when
+  `PATH` changes. `tools` went from ~1.4 s to ~0.2 s; `doctor` from ~1.4 s to
+  ~0.2 s. `tools --refresh` / `doctor --refresh` re-probe on demand.
 
 ### Beyond the 40: packaging, repair and optimization
 

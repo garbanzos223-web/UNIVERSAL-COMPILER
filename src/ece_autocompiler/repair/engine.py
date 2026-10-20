@@ -192,7 +192,10 @@ class RepairEngine:
         from ..build.process import run_single
 
         result = run_single(tests_command, Path(project_dir), timeout=900)
-        return result.ok, "\n".join(result.errors[-20:] + result.step_results[-1].output_lines[-20:])
+        output_lines: list[str] = []
+        for step in result.step_results:
+            output_lines.extend(step.output_lines)
+        return result.ok, "\n".join((result.errors[-20:] + output_lines[-20:]))
 
     # ------------------------------------------------------------------
     def repair(

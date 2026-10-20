@@ -27,6 +27,8 @@ CSV_COLUMNS: tuple[str, ...] = (
     "artifact_count",
     "sha256",
     "message",
+    "profile",
+    "format",
 )
 
 
@@ -122,8 +124,15 @@ def replay_command(record: Any, *, executable: str = "ece-autocompiler") -> str:
     data = _as_dict(record)
     project = str(data.get("project_path", "") or ".")
     mode = str(data.get("mode", "ece") or "ece")
-    verb = "exe" if mode == "exe" else "build"
-    return f'{executable} {verb} "{project}"'
+    if mode == "exe":
+        return f'{executable} exe "{project}"'
+    if mode == "package":
+        fmt = str(data.get("format", "") or "")
+        suffix = f" --format {fmt}" if fmt else ""
+        return f'{executable} package "{project}"{suffix}'
+    profile = str(data.get("profile", "") or "")
+    suffix = f" --profile {profile}" if profile and profile != "none" else ""
+    return f'{executable} build "{project}"{suffix}'
 
 
 def describe(records: list) -> list[str]:

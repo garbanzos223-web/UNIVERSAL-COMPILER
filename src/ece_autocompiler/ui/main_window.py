@@ -1077,6 +1077,7 @@ class MainWindow(ttk.Frame):
                 artifact_count=artifact_count,
                 sha256=sha256,
                 message=message or ("Build and package succeeded" if ok else "Build failed"),
+                profile=self.profile_var.get() if hasattr(self, "profile_var") else "",
             ),
             base=self.ctx.config.work_dir,
         )
@@ -1335,12 +1336,12 @@ class ToolchainDialog(_Dialog):
         row = ttk.Frame(self, padding=(12, 6, 12, 12))
         row.pack(fill="x")
         ttk.Button(row, text="Copy install command", command=self._copy_hint).pack(side="left")
-        ttk.Button(row, text="Rescan", command=self._scan).pack(side="left", padx=8)
+        ttk.Button(row, text="Rescan", command=lambda: self._scan(force=True)).pack(side="left", padx=8)
         ttk.Button(row, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
 
         self._scan()
 
-    def _scan(self) -> None:
+    def _scan(self, *, force: bool = False) -> None:
         self.tree.delete(*self.tree.get_children())
         self.summary_var.set("Discovering toolchains...")
         self.ctx.status.set("Discovering toolchains...")
@@ -1348,7 +1349,14 @@ class ToolchainDialog(_Dialog):
         def work():
             from ..toolchain_versions import toolchain_versions
 
-            return discover_all(), {row.tool_id: row for row in toolchain_versions()}
+            if force:
+                # The probe results are cached; a rescan must really probe again.
+                from ..detection import refresh
+
+                tools = refresh()
+            else:
+                tools = discover_all()
+            return tools, {row.tool_id: row for row in toolchain_versions()}
 
         def done(payload) -> None:
             tools, versions = payload

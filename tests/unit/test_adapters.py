@@ -65,6 +65,77 @@ class RegistryTests(unittest.TestCase):
         plan = python.create_build_plan(root)
         self.assertTrue(plan.steps)
 
+    def test_cmake_plan_configures_and_builds(self) -> None:
+        from unittest import mock
+
+        root = _project({"CMakeLists.txt": "project(x)"})
+        cmake = next(a for a in AdapterRegistry().all() if a.adapter_id == "cpp-cmake")
+        with mock.patch(
+            "ece_autocompiler.adapters.external_tool_adapter.get_tool",
+            return_value=_fake_tool("cmake"),
+        ):
+            plan = cmake.create_build_plan(root)
+        ids = [step.id for step in plan.steps]
+        # Configuring is not enough: the project has to be built too.
+        self.assertIn("cmake-configure", ids)
+        self.assertIn("cmake-build", ids)
+        build = next(s for s in plan.steps if s.id == "cmake-build")
+        self.assertIn("--build", build.cmd_args)
+        self.assertIn("--parallel", build.cmd_args)
+
+    def test_cmake_steps_need_consent(self) -> None:
+        from unittest import mock
+
+        root = _project({"CMakeLists.txt": "project(x)"})
+        cmake = next(a for a in AdapterRegistry().all() if a.adapter_id == "cpp-cmake")
+        with mock.patch(
+            "ece_autocompiler.adapters.external_tool_adapter.get_tool",
+            return_value=_fake_tool("cmake"),
+        ):
+            plan = cmake.create_build_plan(root)
+        # Configuring runs the project's CMakeLists.txt: project-controlled code.
+        self.assertTrue(plan.requires_consent)
+
+    def test_make_plan_uses_parallel_jobs(self) -> None:
+        from unittest import mock
+
+        root = _project({"Makefile": "all:\n\t@echo hi\n"})
+        make = next(a for a in AdapterRegistry().all() if a.adapter_id == "cpp-make")
+        with mock.patch(
+            "ece_autocompiler.adapters.external_tool_adapter.get_tool",
+            return_value=_fake_tool("make"),
+        ):
+            plan = make.create_build_plan(root)
+        step = plan.steps[0]
+        self.assertIn("-j", step.cmd_args)
+
+    def test_meson_project_requires_meson_and_ninja(self) -> None:
+        from unittest import mock
+
+        root = _project({"meson.build": "project('x', 'c')"})
+        meson = next(a for a in AdapterRegistry().all() if a.adapter_id == "cpp-meson")
+        with mock.patch(
+            "ece_autocompiler.adapters.external_tool_adapter.get_tool",
+            return_value=_fake_tool("ninja"),
+        ):
+            report = meson.inspect_requirements(root)
+        ids = [r.id for r in report.requirements]
+        self.assertIn("meson", ids)
+        self.assertIn("ninja", ids)
+
+
+def _fake_tool(tool_id: str):
+    """A ToolInfo that looks like an installed tool."""
+    from ece_autocompiler.detection.toolchains import ToolInfo
+
+    return ToolInfo(
+        id=tool_id,
+        name=tool_id,
+        found=True,
+        path=f"C:/tools/{tool_id}.exe",
+        version="1.0",
+    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,6 +79,7 @@ SPECS: tuple[_Spec, ...] = (
     _Spec("rustc", "Rust compiler", ("rustc",), install_hint="https://rustup.rs/"),
     _Spec("go", "Go", ("go",), version_args=("version",), install_hint="https://go.dev/dl/"),
     _Spec("cmake", "CMake", ("cmake",), install_hint="https://cmake.org/download/"),
+    _Spec("meson", "Meson", ("meson",), install_hint="https://mesonbuild.com/"),
     _Spec("ninja", "Ninja", ("ninja",), install_hint="https://ninja-build.org/"),
     _Spec("gcc", "GCC (C)", ("gcc",), install_hint="https://www.mingw-w64.org/"),
     _Spec("gpp", "G++ (C++)", ("g++",), install_hint="https://www.mingw-w64.org/"),
@@ -166,10 +167,29 @@ def _discover_one(spec: _Spec) -> ToolInfo:
 
 @lru_cache(maxsize=1)
 def discover_all() -> dict[str, ToolInfo]:
-    """Return every known tool keyed by id. Cached for the process lifetime."""
+    """Return every known tool keyed by id. Cached for the process lifetime.
+
+    The probe results are also cached on disk for a short while (see
+    :mod:`ece_autocompiler.detection.toolchain_cache`), because starting one
+    process per tool costs about a second.
+    """
+    from . import toolchain_cache
+
+    cached = toolchain_cache.load()
+    if cached:
+        restored: dict[str, ToolInfo] = {}
+        for tool_id, data in cached.items():
+            try:
+                restored[tool_id] = ToolInfo(**data)
+            except TypeError:
+                continue
+        if restored:
+            return restored
+
     result: dict[str, ToolInfo] = {}
     for spec in SPECS:
         result[spec.id] = _discover_one(spec)
+    toolchain_cache.save({tool_id: info.to_dict() for tool_id, info in result.items()})
     return result
 
 
@@ -178,8 +198,11 @@ def get_tool(tool_id: str) -> ToolInfo | None:
 
 
 def refresh() -> dict[str, ToolInfo]:
+    """Forget every cached probe result and probe the machine again."""
+    from . import toolchain_cache
+
     discover_all.cache_clear()
-    _discover_one.cache_clear() if hasattr(_discover_one, "cache_clear") else None
+    toolchain_cache.invalidate()
     return discover_all()
 
 

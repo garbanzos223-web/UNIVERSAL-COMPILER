@@ -50,6 +50,14 @@ def _tool_for_adapter(adapter_id: str) -> str | None:
     return mapping.get(adapter_id)
 
 
+def _parallel_jobs() -> str:
+    """Number of parallel build jobs to use (the machine's CPU count)."""
+    import os
+
+    count = os.cpu_count() or 1
+    return str(max(1, min(count, 64)))
+
+
 def _default_steps(adapter_id: str, tool_id: str | None, root: Path) -> list[BuildPlanStep]:
     steps: list[BuildPlanStep] = []
     tool = get_tool(tool_id) if tool_id else None
@@ -110,25 +118,74 @@ def _default_steps(adapter_id: str, tool_id: str | None, root: Path) -> list[Bui
             )
         )
     elif adapter_id == "cpp-cmake" and tool_id == "cmake":
+        # Configuring runs the project's CMakeLists.txt, which is
+        # project-controlled code: it needs the usual consent.
         steps.append(
             BuildPlanStep(
                 id="cmake-configure",
                 title="Configure with cmake",
                 cmd_args=[exe, "-S", ".", "-B", "build"],
                 workdir=root,
-                requires_approval=False,
+                requires_approval=True,
                 timeout=300,
             )
         )
+        steps.append(
+            BuildPlanStep(
+                id="cmake-build",
+                title="Build with cmake --build (parallel)",
+                cmd_args=[
+                    exe, "--build", "build", "--config", "Release",
+                    "--parallel", _parallel_jobs(),
+                ],
+                workdir=root,
+                requires_approval=True,
+                timeout=1800,
+            )
+        )
+    elif adapter_id == "cpp-meson" and tool_id == "ninja":
+        meson = get_tool("meson")
+        ninja_exe = tool.path if tool and tool.path else "ninja"
+        if meson and meson.found:
+            steps.append(
+                BuildPlanStep(
+                    id="meson-setup",
+                    title="Configure with meson setup",
+                    cmd_args=[meson.path, "setup", "build", "--buildtype=release"],
+                    workdir=root,
+                    requires_approval=True,
+                    timeout=300,
+                )
+            )
+            steps.append(
+                BuildPlanStep(
+                    id="ninja-build",
+                    title="Build with ninja (parallel)",
+                    cmd_args=[ninja_exe, "-C", "build", "-j", _parallel_jobs()],
+                    workdir=root,
+                    requires_approval=True,
+                    timeout=1800,
+                )
+            )
+        else:
+            steps.append(
+                BuildPlanStep(
+                    id="meson-missing",
+                    title="Meson is required to configure this project",
+                    cmd_args=[],
+                    workdir=root,
+                    requires_approval=False,
+                )
+            )
     elif adapter_id == "cpp-make" and tool_id == "make":
         steps.append(
             BuildPlanStep(
                 id="make",
-                title="Build with make",
-                cmd_args=[exe],
+                title="Build with make (parallel)",
+                cmd_args=[exe, "-j", _parallel_jobs()],
                 workdir=root,
                 requires_approval=False,
-                timeout=1200,
+                timeout=1800,
             )
         )
     elif adapter_id == "php" and tool_id == "php":
@@ -187,6 +244,25 @@ class ExternalToolAdapter(BuildAdapter):
     def inspect_requirements(self, root: Path, config: dict | None = None) -> RequirementsReport:
         reqs: list[Requirement] = []
         tool_id = self._tool_id
+        if self.adapter_id == "cpp-meson":
+            # A Meson project needs meson to configure and ninja to build.
+            for extra in ("meson", "ninja"):
+                info = get_tool(extra)
+                reqs.append(
+                    Requirement(
+                        id=extra,
+                        name=info.name if info else extra,
+                        required=True,
+                        found=info.found if info else False,
+                        version=info.version if info else None,
+                        path=info.path if info else None,
+                        install_hint=info.install_hint if info else "",
+                        kind="tool",
+                    )
+                )
+            ready = all(r.found for r in reqs)
+            notes = ["Toolchain not found; end-to-end build is not verified in this environment."]
+            return RequirementsReport(requirements=reqs, ready=ready, notes=notes)
         if tool_id:
             t = get_tool(tool_id)
             reqs.append(
