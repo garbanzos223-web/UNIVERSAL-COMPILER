@@ -118,6 +118,44 @@ class DiagnosticParsingTests(unittest.TestCase):
         found = parse_diagnostics(output)
         self.assertTrue(any(d.category == CATEGORY_LINKER for d in found))
 
+    def test_maven_and_gradle_errors(self) -> None:
+        output = (
+            "[INFO] BUILD FAILURE\n"
+            "[ERROR] /work/src/Main.java:[12,5] cannot find symbol\n"
+            "[ERROR]   symbol:   class List\n"
+        )
+        found = parse_diagnostics(output)
+        errors = [d for d in found if d.severity == "error" and d.file]
+        self.assertTrue(errors)
+        self.assertEqual(errors[0].file, "/work/src/Main.java")
+        self.assertEqual(errors[0].line, 12)
+        self.assertEqual(errors[0].column, 5)
+
+    def test_node_runtime_error_points_at_the_frame(self) -> None:
+        output = (
+            "C:\\work\\app.js:3\n"
+            "console.log(x)\n"
+            "^\n"
+            "ReferenceError: x is not defined\n"
+            "    at Object.<anonymous> (C:\\work\\app.js:3:11)\n"
+        )
+        found = parse_diagnostics(output)
+        errors = [d for d in found if d.severity == "error" and d.file]
+        self.assertTrue(errors)
+        self.assertEqual(errors[0].file, "C:\\work\\app.js")
+        self.assertEqual(errors[0].line, 3)
+        self.assertEqual(errors[0].code, "ReferenceError")
+
+    def test_a_cmake_error_is_captured(self) -> None:
+        output = "CMake Error at CMakeLists.txt:10 (message):\n  Target requires C++17\n"
+        found = parse_diagnostics(output)
+        self.assertTrue(any("CMake Error" in d.message for d in found))
+
+    def test_a_javascript_error_is_not_reported_as_python(self) -> None:
+        output = "ReferenceError: x is not defined\n"
+        found = parse_diagnostics(output)
+        self.assertFalse(any(d.compiler == "python" for d in found))
+
     def test_empty_output_produces_no_diagnostics(self) -> None:
         self.assertEqual(parse_diagnostics(""), [])
 

@@ -131,8 +131,10 @@ In the desktop window: **Tools → Create distributable package...**
 | Go | `main.go:10:2: undefined: fmt.Println` |
 | Python | `File "app.py", line 4` + `SyntaxError: expected ':'` |
 | javac | `src/Main.java:12: error: cannot find symbol` |
+| Maven / Gradle | `[ERROR] /work/src/Main.java:[12,5] cannot find symbol` |
 | TypeScript | `app.ts(3,5): error TS2322: Type 'string' is not assignable` |
-| Linkers and tools | `undefined reference to ...`, `ld returned 1 exit status`, `command not found` |
+| Node.js runtime | `ReferenceError: x is not defined` + `at Object.<anonymous> (app.js:3:11)` |
+| Linkers and tools | `undefined reference to ...`, `ld returned 1 exit status`, `CMake Error at ...`, `command not found` |
 
 Diagnostics are classified into: syntax, missing import, undefined identifier,
 type mismatch, invalid signature, linker, missing dependency, incorrect flags,
@@ -226,6 +228,11 @@ Conflicting options are reported, not silently applied: two different `-O`
 levels, `-g` in an optimized build, stripping symbols while keeping debug
 information, or `-march=native` (which would make the binary machine
 specific).
+
+The options are also checked against the toolchain that is really installed:
+a Cargo older than 1.21 cannot do link-time optimization, tiered PGO needs the
+.NET 8 SDK, and a missing toolchain is reported as *"could not be checked"*
+rather than assumed to be fine.
 
 ### Measurement
 

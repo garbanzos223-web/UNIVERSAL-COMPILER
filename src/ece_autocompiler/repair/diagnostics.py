@@ -183,6 +183,14 @@ _PY_ERROR_RE = re.compile(r"^(?P<etype>[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception|
 _JAVA_RE = re.compile(
     r"^(?P<file>[^\s:][^:]*?):(?P<line>\d+):\s*(?P<sev>error|warning):\s*(?P<msg>.*)$"
 )
+_MAVEN_RE = re.compile(
+    r"^(?:\[(?P<sev>ERROR|WARNING)\]\s*)?(?P<file>[^\s\[]+\.java):"
+    r"\[(?P<line>\d+),(?P<col>\d+)\]\s*(?P<msg>.*)$"
+)
+_NODE_FRAME_RE = re.compile(r"\((?P<file>.+?):(?P<line>\d+):(?P<col>\d+)\)")
+_NODE_ERROR_RE = re.compile(
+    r"^(?P<etype>[A-Za-z_][A-Za-z0-9_]*Error|ReferenceError|TypeError|SyntaxError):\s*(?P<msg>.*)$"
+)
 _TS_RE = re.compile(
     r"^(?P<file>[^\(]+?)\((?P<line>\d+),(?P<col>\d+)\):\s*"
     r"(?P<sev>error|warning)\s+(?P<code>TS\d+)\s*:?\s*(?P<msg>.*)$"
@@ -203,6 +211,10 @@ _GENERIC_PHRASES: tuple[str, ...] = (
     "command not found",
     "is not recognized as an internal or external command",
     "permission denied",
+    "cmake error",
+    "cmake warning",
+    "ninja: error",
+    "gradle build failed",
     "fatal error:",
     "error:",
 )
@@ -331,10 +343,25 @@ def parse_go(output: str) -> list[Diagnostic]:
     return found
 
 
+#: Exceptions that only Python raises. Other languages use their own names
+#: (``ReferenceError`` is JavaScript, for example).
+_PYTHON_EXCEPTIONS = frozenset(
+    {
+        "AssertionError", "AttributeError", "FileExistsError", "FileNotFoundError",
+        "ImportError", "IndentationError", "IndexError", "KeyError",
+        "ModuleNotFoundError", "NameError", "OSError", "PermissionError",
+        "RecursionError", "RuntimeError", "StopIteration", "SyntaxError",
+        "TabError", "TypeError", "UnboundLocalError", "UnicodeDecodeError",
+        "ValueError", "ZeroDivisionError",
+    }
+)
+
+
 def parse_python(output: str) -> list[Diagnostic]:
     """Python tracebacks and syntax errors."""
     found: list[Diagnostic] = []
     lines = output.splitlines()
+    has_traceback = "Traceback (most recent call last)" in output
     for index, raw in enumerate(lines):
         stripped = raw.strip()
         file_match = _PY_FILE_RE.match(stripped)
@@ -360,16 +387,22 @@ def parse_python(output: str) -> list[Diagnostic]:
             )
             continue
         error_match = _PY_ERROR_RE.match(stripped)
-        if error_match:
-            found.append(
-                _mk(
-                    severity="error",
-                    code=error_match.group("etype"),
-                    message=error_match.group("msg").strip(),
-                    raw=raw.rstrip(),
-                    compiler="python",
-                )
+        if not error_match:
+            continue
+        etype = error_match.group("etype")
+        # A bare "SomethingError: text" line is only Python's when the name is
+        # a Python exception or the output is a Python traceback.
+        if etype not in _PYTHON_EXCEPTIONS and not has_traceback:
+            continue
+        found.append(
+            _mk(
+                severity="error",
+                code=etype,
+                message=error_match.group("msg").strip(),
+                raw=raw.rstrip(),
+                compiler="python",
             )
+        )
     return found
 
 
@@ -448,12 +481,78 @@ def parse_generic(output: str, claimed: set[str] | None = None) -> list[Diagnost
     return found
 
 
+def parse_maven(output: str) -> list[Diagnostic]:
+    """Maven and Gradle compiler errors (``File.java:[12,5] message``)."""
+    found: list[Diagnostic] = []
+    for raw in output.splitlines():
+        line = raw.rstrip()
+        match = _MAVEN_RE.match(line.strip())
+        if not match:
+            continue
+        message = match.group("msg").strip()
+        severity = (match.group("sev") or "error").lower()
+        if severity == "error":
+            severity = "error"
+        else:
+            severity = "warning"
+        found.append(
+            _mk(
+                file=match.group("file").strip(),
+                line=int(match.group("line")),
+                column=int(match.group("col")),
+                severity=severity,
+                message=message,
+                raw=line,
+                compiler="java",
+            )
+        )
+    return found
+
+
+def parse_node(output: str) -> list[Diagnostic]:
+    """Node.js runtime errors (a stack frame plus the error type)."""
+    found: list[Diagnostic] = []
+    lines = output.splitlines()
+    for index, raw in enumerate(lines):
+        stripped = raw.strip()
+        error_match = _NODE_ERROR_RE.match(stripped)
+        if not error_match:
+            continue
+        message = error_match.group("msg").strip()
+        file_name = ""
+        line_no = 0
+        column = 0
+        # The frame that names the file is usually the first one.
+        for follow in lines[index : index + 8]:
+            frame = _NODE_FRAME_RE.search(follow)
+            if frame:
+                file_name = frame.group("file").strip()
+                line_no = int(frame.group("line"))
+                column = int(frame.group("col"))
+                break
+        found.append(
+            _mk(
+                file=file_name,
+                line=line_no,
+                column=column,
+                severity="error",
+                code=error_match.group("etype"),
+                message=message,
+                raw=raw.rstrip(),
+                compiler="node",
+            )
+        )
+    return found
+
+
 #: Every parser, tried in order.
 PARSERS = (
     parse_cargo,
     parse_typescript,
+    parse_maven,
     parse_java,
     parse_msvc,
+    parse_node,
     parse_python,
     parse_gcc,
     parse_go,

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 def _add_src() -> None:
@@ -112,6 +113,54 @@ class ProfileTests(unittest.TestCase):
             "cpp-cmake", OptimizationRequest.from_args("custom", ["-march=native"])
         )
         self.assertTrue(any("-march=native" in w for w in plan.warnings))
+
+
+class ToolchainValidationTests(unittest.TestCase):
+    """The options are checked against the toolchain that is really installed."""
+
+    def _tool(self, tool_id: str, version: str):
+        from ece_autocompiler.detection.toolchains import ToolInfo
+
+        return ToolInfo(
+            id=tool_id, name=tool_id, found=True, path=f"{tool_id}.exe", version=version
+        )
+
+    def test_an_old_cargo_is_warned_about(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", return_value=self._tool("cargo", "1.15.0")
+        ):
+            plan = build_optimization_plan(
+                "rust-cargo", OptimizationRequest.from_args("performance")
+            )
+        self.assertTrue(any("Cargo is older" in w for w in plan.warnings))
+
+    def test_a_recent_cargo_is_not_warned_about(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", return_value=self._tool("cargo", "1.70.0")
+        ):
+            plan = build_optimization_plan(
+                "rust-cargo", OptimizationRequest.from_args("performance")
+            )
+        self.assertFalse(any("Cargo is older" in w for w in plan.warnings))
+
+    def test_an_old_dotnet_sdk_is_warned_about(self) -> None:
+        with mock.patch(
+            "ece_autocompiler.detection.get_tool", return_value=self._tool("dotnet", "7.0.410")
+        ):
+            plan = build_optimization_plan(
+                "dotnet", OptimizationRequest.from_args("performance")
+            )
+        self.assertTrue(any("Tiered PGO" in w for w in plan.warnings))
+
+    def test_a_missing_toolchain_is_reported_as_unchecked(self) -> None:
+        from ece_autocompiler.detection.toolchains import ToolInfo
+
+        missing = ToolInfo(id="dotnet", name=".NET", found=False, error="Not found on PATH")
+        with mock.patch("ece_autocompiler.detection.get_tool", return_value=missing):
+            plan = build_optimization_plan(
+                "dotnet", OptimizationRequest.from_args("performance")
+            )
+        self.assertTrue(any("could not be checked" in w for w in plan.warnings))
 
 
 class ApplyOptimizationTests(unittest.TestCase):

@@ -135,6 +135,73 @@ def _detect_conflicts(flags: list[str], profile_key: str) -> list[str]:
     return warnings
 
 
+def _toolchain_warnings(adapter_id: str, optimization: OptimizationPlan) -> list[str]:
+    """Check the selected options against the toolchain that is installed.
+
+    A flag the installed compiler does not understand is a build failure, so
+    it is reported before the build runs - never after.
+    """
+    from ..detection import get_tool
+    from ..toolchain_versions import parse_version, version_satisfies
+
+    warnings: list[str] = []
+    family = optimization.family
+
+    def _version_of(tool_id: str) -> tuple[int, ...] | None:
+        info = get_tool(tool_id)
+        if info is None or not info.found:
+            return None
+        return parse_version(info.version)
+
+    def _tool_missing(tool_id: str) -> bool:
+        info = get_tool(tool_id)
+        return info is None or not info.found
+
+    if family == "cargo":
+        if optimization.env.get("CARGO_PROFILE_RELEASE_LTO"):
+            version = _version_of("cargo")
+            if version is not None and not version_satisfies(".".join(map(str, version)), (1, 21)):
+                warnings.append(
+                    "This Cargo is older than 1.21, which is when link-time "
+                    "optimization became available; the build will fail."
+                )
+            elif _tool_missing("cargo"):
+                warnings.append(
+                    "Cargo was not found, so the cargo options could not be checked "
+                    "against a real toolchain."
+                )
+    elif family == "dotnet":
+        version = _version_of("dotnet")
+        for prop in optimization.properties:
+            if prop.startswith("TieredPGO") and version is not None:
+                if not version_satisfies(".".join(map(str, version)), (8, 0)):
+                    warnings.append(
+                        "Tiered PGO needs the .NET 8 SDK or newer; this SDK is older."
+                    )
+            if prop.startswith("PublishTrimmed") and version is not None:
+                if not version_satisfies(".".join(map(str, version)), (6, 0)):
+                    warnings.append(
+                        "PublishTrimmed needs the .NET 6 SDK or newer; this SDK is older."
+                    )
+        if version is None and optimization.properties:
+            warnings.append(
+                "The .NET SDK was not found, so the publish options could not be "
+                "checked against a real toolchain."
+            )
+    elif family in ("cmake", "meson", "make"):
+        if "-flto" in optimization.flags:
+            for tool_id in ("gcc", "clang"):
+                version = _version_of(tool_id)
+                if version is not None and not version_satisfies(
+                    ".".join(map(str, version)), (4, 5)
+                ):
+                    warnings.append(
+                        f"{tool_id} is older than 4.5, which is when link-time "
+                        "optimization became available; the build will fail."
+                    )
+    return warnings
+
+
 def build_optimization_plan(
     adapter_id: str,
     request: OptimizationRequest | None = None,
@@ -199,6 +266,7 @@ def build_optimization_plan(
         return plan
 
     plan.warnings.extend(_detect_conflicts(plan.flags, key))
+    plan.warnings.extend(_toolchain_warnings(adapter_id, plan))
     if plan.requires_approval:
         plan.notes.append(
             "This profile enables options that can change program behaviour "
