@@ -38,6 +38,7 @@ class PythonBuildIntegrationTests(unittest.TestCase):
         )
         self.assertTrue(result.ok, msg=str(result.errors))
         self.assertTrue(package.ok, msg=package.message)
+        self.assertGreater(result.duration_seconds, 0.0)
 
         report = validate_container(package.container_path, deep=True)
         self.assertTrue(report.ok, msg=str(report.issues))

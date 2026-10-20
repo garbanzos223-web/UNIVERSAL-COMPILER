@@ -21,14 +21,18 @@ into small, single-responsibility packages. Data flows in one direction:
 
 | Package | Responsibility |
 | --- | --- |
-| `container` | The `.ece` format: `spec` (constants/struct), `codec` (compression/hash), `model` (manifest & index), `writer`, `reader`, `validator`, `security` (path safety), `extraction` (safe extractor). |
+| `container` | The `.ece` format: `spec` (constants/struct), `codec` (compression/hash), `model` (manifest & index), `writer`, `reader`, `validator`, `security` (path safety), `diff` (container comparison), `integrity` (SHA-256 sidecars). |
 | `detection` | `markers` (file/dir markers and source hints), `toolchains` (real tool discovery via `shutil.which` + version probe), `detector.scan()` (ranked candidates, ambiguity, monorepo awareness). |
 | `adapters` | `base` (abstract `BuildAdapter` + data types), `registry` (adapter instances), `python_adapter`, `node_adapter`, `external_tool_adapter`. |
-| `build` | `process.run_command` (argv execution, timeout, cancel, redaction), `orchestrator.BuildOrchestrator` (detect → plan → build → collect → package), `history` (JSONL log of attempts). |
-| `diagnostics` | `classifier` maps tool output to `Category` values and hints. |
+| `build` | `process.run_command` (argv execution, timeout, cancel, redaction), `orchestrator.BuildOrchestrator` (detect → plan → build → collect → package), `history` (JSONL log of attempts), `timing` (local duration estimates + live ETA). |
+| `diagnostics` | `classifier` maps tool output to `Category` values and hints; `doctor` checks the machine, folders, long paths and toolchain versions. |
+| `usability` | Front-end-neutral helpers shared by CLI, GUI and tests: `guidance` (next step, failures), `health`, `plan` (dry run), `summary`, `history_query`, `wizard`. |
+| `templates` | Project skeletons for `init` (Python script/package, Node.js, C++/CMake). |
+| `local_store` | Atomic local config/history storage under `%LOCALAPPDATA%`; no database. |
+| `toolchain_hints` / `toolchain_versions` | Copyable install commands (winget/choco/scoop/URL) and minimum supported versions. |
 | `security` | Filename sanitizing and path-containment helpers for front ends. |
-| `ui` | Tkinter interface: `theme`, `widgets` (task runner, console, tables), `main_window` (panels). |
-| `cli` / `app` | Argument parsing and sub-command dispatch. |
+| `ui` | Tkinter interface: `theme`, `widgets` (task runner, console, tables), `main_window` (panels and all dialogs). |
+| `cli` / `app` | Argument parsing and sub-command dispatch (`analyze`, `plan`, `build`, `exe`, `doctor`, `init`, `diff`, `history`, `validate`, `inspect`, `extract`, `tools`, `gui`). |
 
 ## Key design decisions
 

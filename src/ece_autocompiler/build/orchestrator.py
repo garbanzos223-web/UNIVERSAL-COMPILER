@@ -25,6 +25,10 @@ class PackageResult:
     ok: bool
     container_path: Path | None
     message: str = ""
+    sha256: str = ""
+    file_count: int = 0
+    size: int = 0
+    selected_root: str = ""
 
 
 def _artifact_to_payload(artifacts, root: Path):
@@ -57,14 +61,37 @@ class BuildOrchestrator:
         overwrite: bool = False,
         compression: str = "zlib",
         prefer_adapter: str | None = None,
+        package_only: bool = False,
+        selected_adapter: list[str] | None = None,
         progress: ProgressCallback | None = None,
         cancel: CancelToken | None = None,
     ) -> tuple[BuildResult, PackageResult]:
+        """Detect, build (unless *package_only*) and package into an .ece file.
+
+        *prefer_adapter* forces a specific adapter (monorepo choice).
+        *package_only* skips the build and packages what is already on disk.
+        *selected_adapter*, when given, receives the chosen adapter id so the
+        caller can record which one was used without re-running detection.
+        """
         root = Path(project_path).resolve()
         if not root.exists():
             raise ConfigurationError("Project path does not exist", detail=str(root))
         out = Path(output_path)
         self.config.ensure_directories()
+        started_at = time.monotonic()
+
+        def _finish(result: BuildResult) -> BuildResult:
+            """Stamp the real wall time of detect + build + package (item 8).
+
+            The adapter measures its own compile step; packaging and scanning
+            also take time, so the caller-facing duration is never less than
+            the whole operation. Package-only runs therefore stop reporting
+            a misleading 0.0 seconds.
+            """
+            result.duration_seconds = max(
+                result.duration_seconds, round(time.monotonic() - started_at, 3)
+            )
+            return result
 
         if cancel is not None and cancel.is_set():
             raise BuildError("Cancelled")
@@ -87,36 +114,43 @@ class BuildOrchestrator:
         adapter = self.registry.for_detected(best)
         if adapter is None:
             raise ConfigurationError("No adapter for detected project", detail=best.adapter_id)
+        if selected_adapter is not None:
+            selected_adapter[:] = [adapter.adapter_id]
 
         if progress:
             progress("Creating build plan", 20, 100)
         plan = adapter.create_build_plan(project_dir, config_overrides)
-        if plan.requires_consent and not consent_granted:
+        if plan.requires_consent and not consent_granted and not package_only:
             raise ConfigurationError(
                 "This build requires explicit consent (runs project scripts).",
                 detail="Grant consent and retry.",
             )
 
-        if progress:
-            progress("Running build", 30, 100)
-        log_dir = self.config.work_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"build_{int(time.time())}.log"
-        res = adapter.execute_build(
-            plan,
-            progress=(
-                lambda msg, d, t: progress(
-                    f"Build: {msg}", 30 + int(d * 40 / max(1, t)), 100
+        if package_only:
+            if progress:
+                progress("Packaging only (build skipped)", 60, 100)
+            res = BuildResult(ok=True, exit_code=0, notes=["Packaging only: no build was run."])
+        else:
+            if progress:
+                progress("Running build", 30, 100)
+            log_dir = self.config.work_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / f"build_{int(time.time())}.log"
+            res = adapter.execute_build(
+                plan,
+                progress=(
+                    lambda msg, d, t: progress(
+                        f"Build: {msg}", 30 + int(d * 40 / max(1, t)), 100
+                    )
                 )
+                if progress
+                else None,
+                cancel=cancel,
+                log_path=log_path,
+                consent_granted=consent_granted,
             )
-            if progress
-            else None,
-            cancel=cancel,
-            log_path=log_path,
-            consent_granted=consent_granted,
-        )
-        if not res.ok:
-            return res, PackageResult(ok=False, container_path=None, message="Build failed")
+            if not res.ok:
+                return _finish(res), PackageResult(ok=False, container_path=None, message="Build failed")
 
         if progress:
             progress("Collecting artifacts", 75, 100)
@@ -150,13 +184,30 @@ class BuildOrchestrator:
         writer = ContainerWriter(compression=compression, limits=self.limits)
         items = _artifact_to_payload(artifacts, project_dir)
         if not items:
-            return res, PackageResult(ok=False, container_path=None, message="No artifacts to package")
+            return _finish(res), PackageResult(ok=False, container_path=None, message="No artifacts to package")
         try:
             wrep = writer.write(out, items, manifest, overwrite=overwrite)
-            prep = PackageResult(ok=True, container_path=wrep.destination, message="Package created")
+            digest = ""
+            size = 0
+            try:
+                from ..container.integrity import sha256_file
+
+                digest = sha256_file(wrep.destination)
+                size = wrep.destination.stat().st_size
+            except OSError:
+                digest = ""
+            prep = PackageResult(
+                ok=True,
+                container_path=wrep.destination,
+                message="Package created",
+                sha256=digest,
+                file_count=len(items),
+                size=size,
+                selected_root=best.root,
+            )
         except Exception as e:
-            return res, PackageResult(ok=False, container_path=None, message=str(e))
+            return _finish(res), PackageResult(ok=False, container_path=None, message=str(e))
 
         if progress:
             progress("Done", 100, 100)
-        return res, prep
+        return _finish(res), prep

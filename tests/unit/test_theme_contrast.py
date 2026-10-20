@@ -21,7 +21,7 @@ def _add_src() -> None:
 
 _add_src()
 
-from ece_autocompiler.ui.state import STATE_UI, UiState  # noqa: E402
+from ece_autocompiler.ui.state import BUSY_STATES, STATE_UI, UiState  # noqa: E402
 from ece_autocompiler.ui.theme import COLORS  # noqa: E402
 
 AA = 4.5
@@ -113,13 +113,13 @@ class StateStyleContractTests(unittest.TestCase):
         for state, spec in STATE_UI.items():
             with self.subTest(state=state.value):
                 self.assertIn(spec.build_state, ("normal", "disabled"))
-                expected = "disabled" if state is UiState.COMPILING else "normal"
+                expected = "disabled" if state in BUSY_STATES else "normal"
                 self.assertEqual(spec.build_state, expected)
 
     def test_cancel_enabled_only_while_compiling(self) -> None:
         for state, spec in STATE_UI.items():
             with self.subTest(state=state.value):
-                expected = "normal" if state is UiState.COMPILING else "disabled"
+                expected = "normal" if state in BUSY_STATES else "disabled"
                 self.assertEqual(spec.cancel_state, expected)
 
     def test_badge_texts_are_unique_and_short(self) -> None:

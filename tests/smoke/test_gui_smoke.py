@@ -38,7 +38,20 @@ try:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
-    from ece_autocompiler.ui.main_window import AppContext, ContainerDialog, MainWindow
+    from ece_autocompiler.ui.main_window import (
+        AppContext,
+        CandidateDialog,
+        ContainerDialog,
+        DiffDialog,
+        ErrorDialog,
+        GettingStartedDialog,
+        HistoryDialog,
+        MainWindow,
+        PlanDialog,
+        ShortcutsDialog,
+        SummaryDialog,
+        TemplateDialog,
+    )
     from ece_autocompiler.ui.state import STATE_UI, UiState
     from ece_autocompiler.ui.theme import COLORS, apply_theme, configure_root_window
     from ece_autocompiler.ui.widgets import StatusBar, TaskRunner
@@ -248,7 +261,9 @@ class GuiSmokeTests(unittest.TestCase):
         expected_bg = {
             UiState.IDLE: COLORS["header"],
             UiState.DETECTING: COLORS["header"],
+            UiState.PLANNING: COLORS["header"],
             UiState.COMPILING: COLORS["accent_fill"],
+            UiState.PACKAGING: COLORS["accent_fill"],
             UiState.SUCCESS: COLORS["ok"],
             UiState.ERROR: COLORS["err"],
             UiState.CANCELLED: COLORS["warn"],
@@ -256,7 +271,9 @@ class GuiSmokeTests(unittest.TestCase):
         expected_fg = {
             UiState.IDLE: COLORS["muted"],
             UiState.DETECTING: COLORS["accent"],
+            UiState.PLANNING: COLORS["accent"],
             UiState.COMPILING: "#ffffff",
+            UiState.PACKAGING: "#ffffff",
             UiState.SUCCESS: COLORS["on_ok"],
             UiState.ERROR: COLORS["on_err"],
             UiState.CANCELLED: COLORS["on_warn"],
@@ -416,7 +433,8 @@ class GuiSmokeTests(unittest.TestCase):
         )
         try:
             with mock.patch.object(mw.build_history, "append"):
-                win._exe_done(failing)
+                with mock.patch.object(mw, "record_sample"):
+                    win._exe_done(failing)
             text = log.get()
             self.assertIn("Executable export failed: boom", text)
             self.assertIn("Why:", text)
@@ -429,6 +447,42 @@ class GuiSmokeTests(unittest.TestCase):
             log.clear()
             win._set_state(UiState.IDLE)
             self.ctx.status.reset()
+
+    def test_12_usability_dialogs_construct(self) -> None:
+        # Every new 1.2 dialog must build its widgets against the real theme
+        # without raising; this is the cheap net for typos in dialog code.
+        from types import SimpleNamespace
+
+        from ece_autocompiler.container import diff_containers
+        from ece_autocompiler.usability.plan import preview_plan
+        from ece_autocompiler.usability.summary import build_summary
+
+        dialogs = [
+            ErrorDialog(self.ctx, "Error", "What happened: x\nWhat to do: y"),
+            SummaryDialog(self.ctx, build_summary(ok=True, artifact_count=1)),
+            PlanDialog(self.ctx, preview_plan(self.tmp)),
+            GettingStartedDialog(self.ctx),
+            ShortcutsDialog(self.ctx),
+            TemplateDialog(self.ctx),
+            DiffDialog(self.ctx, diff_containers(self.sample, self.sample)),
+            CandidateDialog(
+                self.ctx, self.tmp,
+                [SimpleNamespace(
+                    adapter_id="python", root="", confidence=0.9,
+                    evidence=["pyproject.toml"],
+                )],
+            ),
+            HistoryDialog(self.ctx),
+        ]
+        try:
+            for dialog in dialogs:
+                dialog.update_idletasks()
+        finally:
+            for dialog in dialogs:
+                try:
+                    dialog.destroy()
+                except Exception:  # pragma: no cover - already gone
+                    pass
 
 
 if __name__ == "__main__":  # pragma: no cover

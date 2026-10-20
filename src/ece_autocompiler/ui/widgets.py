@@ -297,6 +297,82 @@ def make_tree(parent: tk.Misc, columns: list[tuple[str, str, int]], *, height: i
     return tree
 
 
+class Tooltip:
+    """A hover tooltip that explains a widget in one sentence (item 31).
+
+    Deliberately forgiving: it never raises, and it disappears on leave, click
+    or after ``hide_after`` milliseconds so it cannot get stuck over the UI.
+    """
+
+    def __init__(self, widget: tk.Misc, text: str, *, delay: int = 500, hide_after: int = 6000) -> None:
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.hide_after = hide_after
+        self._after_id: str | None = None
+        self._hide_id: str | None = None
+        self._tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None) -> None:
+        self._cancel()
+        try:
+            self._after_id = self.widget.after(self.delay, self._show)
+        except tk.TclError:  # pragma: no cover - widget destroyed
+            self._after_id = None
+
+    def _show(self) -> None:
+        if self._tip is not None or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 12
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        except tk.TclError:  # pragma: no cover - widget destroyed
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(
+            tip, text=self.text, justify="left", wraplength=380,
+            background=COLORS["panel_alt"], foreground=COLORS["fg"],
+            relief="solid", borderwidth=1, padx=8, pady=5,
+        )
+        label.pack()
+        self._tip = tip
+        try:
+            self._hide_id = self.widget.after(self.hide_after, self._hide)
+        except tk.TclError:  # pragma: no cover
+            self._hide_id = None
+
+    def _cancel(self) -> None:
+        for attr in ("_after_id", "_hide_id"):
+            ident = getattr(self, attr)
+            if ident is not None:
+                try:
+                    self.widget.after_cancel(ident)
+                except tk.TclError:  # pragma: no cover
+                    pass
+                setattr(self, attr, None)
+
+    def _hide(self, _event=None) -> None:
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except tk.TclError:  # pragma: no cover
+                pass
+            self._tip = None
+
+
+def add_tooltip(widget: tk.Misc, text: str) -> Tooltip:
+    """Attach a :class:`Tooltip` to *widget* (kept alive by the widget)."""
+    tip = Tooltip(widget, text)
+    widget._ece_tooltip = tip  # type: ignore[attr-defined]
+    return tip
+
+
 def with_scrollbar(parent: tk.Misc, tree: ttk.Treeview) -> ttk.Scrollbar:
     scroll = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=scroll.set)

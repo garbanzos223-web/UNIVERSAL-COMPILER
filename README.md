@@ -54,18 +54,40 @@ do on your PC** instead of letting you find out by failing:
   [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers antivirus/SmartScreen,
   missing toolchains, and where logs and history actually live.
 
-### Planned next — 40 usability improvements
+### The 40 usability improvements are in this release
 
-[New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) is the
-working plan for the next release: copyable install commands
-(`winget`/`choco`/`scoop`/URL) whenever a toolchain is missing, a first-run
-assistant, a build-plan preview, `.ece` comparison, a `doctor` command, and a
-**build-time bar** that estimates and reports elapsed/remaining time from your
-own local history.
+The plan in [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md)
+is implemented in 1.2. The short version:
 
-That document is a **plan, not a claim**: each item ships only when its stated
-verification passes. Everything always stays on your machine
-(`%LOCALAPPDATA%\ECE-Universal-AutoCompiler\` — config, history, logs, cache).
+- **You never guess what is missing.** `doctor`, `analyze`, `tools`, `.exe`
+  readiness and the window name every missing toolchain and show a copyable
+  install command (`winget` / `choco` / `scoop`) plus the official download URL.
+- **You see the plan first.** `plan`, `build --plan`, `exe --plan` and
+  **Preview plan** show the exact argv commands, working directory, consent and
+  skippable steps; nothing is executed while you read them.
+- **You can always get unstuck.** A first-run walkthrough, a **What do I do now?**
+  button, hover tooltips, a keyboard-shortcut list, project health warnings, and
+  the fixed *what happened / why / what to do* shape for every failure, with a
+  **Copy error** button.
+- **You can find and repeat your work.** Build history is searchable, filterable,
+  exportable to JSON/CSV and replayable as a copyable command; every output gets
+  a `.sha256` sidecar (`--no-integrity` opts out); `diff` compares two
+  containers file by file; `validate --integrity` checks both.
+- **You can start and package safely.** `init` creates Python, Node.js and C++
+  skeletons; `--package-only` skips the build; overwriting, closing during a
+  build and consent-requiring steps ask first; cancelling never leaves a partial
+  output; cancelled and failed builds are recorded honestly.
+- **Build time is estimated honestly.** Before a build, the CLI and the window
+  quote a range from this PC's own successful builds (or say there is no timing
+  history yet); during the build they show elapsed time and an ETA only when a
+  real progress fraction exists; afterwards the summary compares the real
+  duration with the estimate.
+- **You get a copyable summary.** Every build ends with duration, size, SHA-256,
+  what was built, what was skipped and what was **not** done (nothing is
+  installed, unverified claims are never made).
+- **Everything stays local.** Config, history, logs, sidecars and templates live
+  under `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\`; no database, no account, no
+  network.
 
 ---
 
@@ -286,14 +308,18 @@ Full guide, with the real paths for logs and history:
 
 ```
 src/ece_autocompiler/
-  container/     .ece spec, codec, writer, reader, validator, path safety
+  container/     .ece spec, codec, writer, reader, validator, diff, integrity
   extraction/    safe extractor
   detection/     markers, toolchain discovery and project detection
   adapters/      build adapter interface + Python/Node + tool-gated adapters
-  build/         subprocess runner + orchestrator + history
-  diagnostics/   build-output classification
+  build/         subprocess runner + orchestrator + history + timing estimates
+  diagnostics/   build-output classification + environment doctor
+  usability/     shared guidance, health, history search, plan, summary, wizard
   security/      filename/path helpers for the UI and CLI
   ui/            Tkinter desktop interface
+  templates.py   project skeletons used by `init`
+  local_store.py atomic local config/history/log storage
+  toolchain_hints.py / toolchain_versions.py   install commands + minimum versions
 examples/        runnable sample projects (Python, Node)
 docs/            architecture, format, security, supported projects, troubleshooting, dev guide
 tests/           unit, integration and GUI smoke tests (unittest)
@@ -314,8 +340,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 - [Development](docs/DEVELOPMENT.md) — setup, tests, building the `.exe`.
 - [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — what changed, ready to
   paste into a GitHub release.
-- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) — what
-  release 1.2 ships and the 40-item usability plan for the next one.
+- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) — the 40
+  usability improvements shipped in release 1.2.
 
 ## Contributing
 

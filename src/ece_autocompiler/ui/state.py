@@ -24,14 +24,22 @@ from dataclasses import dataclass
 
 
 class UiState(enum.Enum):
-    """The six honest states of the main window."""
+    """The honest states of the main window."""
 
     IDLE = "idle"
     DETECTING = "detecting"
+    PLANNING = "planning"
     COMPILING = "compiling"
+    PACKAGING = "packaging"
     SUCCESS = "success"
     ERROR = "error"
     CANCELLED = "cancelled"
+
+
+#: States in which a task owns the window: Compile is disabled and Cancel is on.
+BUSY_STATES: frozenset[UiState] = frozenset(
+    {UiState.PLANNING, UiState.COMPILING, UiState.PACKAGING}
+)
 
 
 @dataclass(frozen=True)
@@ -60,8 +68,22 @@ STATE_UI: dict[UiState, StateSpec] = {
         cancel_state="disabled",
         log_tag="accent",
     ),
+    UiState.PLANNING: StateSpec(
+        badge_text="Planning",
+        badge_style="StateScan.TLabel",
+        build_state="disabled",
+        cancel_state="normal",
+        log_tag="accent",
+    ),
     UiState.COMPILING: StateSpec(
         badge_text="Compiling",
+        badge_style="StateBusy.TLabel",
+        build_state="disabled",
+        cancel_state="normal",
+        log_tag="accent",
+    ),
+    UiState.PACKAGING: StateSpec(
+        badge_text="Packaging",
         badge_style="StateBusy.TLabel",
         build_state="disabled",
         cancel_state="normal",

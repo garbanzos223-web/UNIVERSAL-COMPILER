@@ -18,6 +18,8 @@ Knowing these paths makes most problems obvious:
 | Working data (one folder per `.exe` build) | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\` |
 | Build logs | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\logs\*.log` |
 | Build history | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\history.jsonl` |
+| Timing history used for estimates | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\timings.jsonl` |
+| Settings and first-run state | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\config\` |
 | Crash log (desktop build only) | `%TEMP%\ece-autocompiler-crash.log` |
 
 Old `work\exe_*` folders are pruned automatically; the most recent ones and

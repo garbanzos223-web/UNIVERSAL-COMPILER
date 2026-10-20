@@ -2,10 +2,16 @@
 
 Usability roadmap (40 items) for ECE Universal AutoCompiler 1.2.
 
+**Status: implemented in 1.2.** The shared infrastructure and all 40 items below
+are part of this release; the verification steps are covered by
+`tests/unit/test_usability.py` and the existing suite (`python run_tests.py`).
+The document keeps the original item-by-item plan as the record of what was
+built and how each item is proven.
+
 Functional usability work only. No visual design (colours, layouts, themes), no
 third-party dependencies, Windows 10/11 x64 only, stdlib-only runtime. Existing
-behaviour is extended, never re-implemented. This is a plan, not a claim: every
-item below lands only when its verification step actually passes.
+behaviour is extended, never re-implemented. Every item below ships only when
+its stated verification step passes.
 
 Legend for each item:
 
@@ -52,18 +58,23 @@ Single registry of "what is missing and where to get it".
 
 ### I3 — `src/ece_autocompiler/build/timing.py` (Special requirement)
 
-* `TimeEstimate(estimate_s, low_s, high_s, confidence, basis, samples)`.
-* `estimate_build(adapter_id, mode, input_bytes, file_count) -> TimeEstimate`
-  from the local timing record (see I3 storage below).
-* `Ticker`: `start()`, `elapsed()`, `step(name)`, `eta(fraction) -> float | None`.
-* Storage (JSON/JSONL only, no DB):
-  * `config\timings.jsonl` — one line per finished build:
-    `{ts, adapter_id, mode, seconds, ok, input_bytes, file_count, cancelled}`.
-  - `config\timings.json` — rolling summary per `(adapter_id, mode)`: `count`,
-    `avg_s`, `median_s`, `p10_s`, `p90_s`, `last_updated`.
-* Confidence rule: `>= 5` samples → "based on N similar builds"; 1–4 samples →
-  low confidence ("rough, few samples"); 0 samples → no estimate, and the UI
-  says so instead of inventing a number.
+* `TimingSample` records one finished build; `Estimate` carries `average`,
+  `low`, `high`, `samples`, `rough`, `excluded` and the human message.
+* `record_sample(base, adapter_id, mode, duration_seconds, ok, file_count,
+  input_bytes)` appends one sample; `estimate_build(base, adapter_id, mode)`
+  reads the matching successful samples and never invents a number.
+* `Ticker(clock=time.monotonic)`: `elapsed()`, `eta(fraction)` and `summary()`.
+  The ETA is returned only when a real progress fraction exists.
+* Storage (JSONL only, no DB, no network):
+  * `work\timings.jsonl` — one line per finished build:
+    `{timestamp, adapter_id, mode, duration_seconds, ok, file_count, input_bytes}`.
+  * A rolling summary (`count`, average, low/high) is computed on demand from
+    that file; there is no derived file to drift out of sync.
+* Confidence rule: fewer than 3 successful samples, or a spread above 50%,
+  is labelled a *rough estimate*; 0 samples means "no estimate yet", and both
+  the CLI and the window say so instead of inventing a number. Failed and
+  cancelled builds are recorded but excluded from the average, and the
+  message states how many were excluded.
 
 ### I4 — `src/ece_autocompiler/build/progress.py`
 
@@ -119,7 +130,7 @@ command; a lint test fails the build if a tool is added without a hint.
 |---|---|---|
 | Settings, wizard flag, last used options | `config/settings.json` | JSON (atomic) |
 | Saved build profiles | `config/profiles.json` | JSON (atomic) |
-| Timing history (per type/toolchain/mode) | `config/timings.jsonl` + `config/timings.json` | JSONL + JSON |
+| Timing history (per type/toolchain/mode) | `work/timings.jsonl` | JSONL |
 | Build history | `work/history.jsonl` | JSONL |
 | Logs | `work/logs/*.log` | text (rotating, redacted) |
 | Templates (`ece init`) | `config/templates/<lang>/` | text |
@@ -756,14 +767,14 @@ Nothing leaves the machine.
 * **What:** history in JSONL with JSON/CSV export, one-click re-run, and
   per-type timings that feed the estimator (item 34).
 * **Why:** builds become reproducible and future estimates get better.
-* **Where:** `build/history.py` (`BuildRecord` gains `mode`, `estimate_s`,
-  `sha256`, `elapsed_ok`; new `export_json`/`write_csv`; `search` from item 29);
-  `ui/main_window.py::HistoryDialog` gains Export JSON/CSV and "Re-run";
-  timing samples live in `config/timings.jsonl` (I3).
+* **Where:** `build/history.py` (`BuildRecord` carries `mode`, `sha256` and
+  `duration_seconds`); `usability/history_query.py` provides filtering,
+  JSON/CSV export and replay commands; `HistoryDialog` gains search, filters,
+  Export and "Re-run"; timing samples live in `work/timings.jsonl` (I3).
 * **Steps:** (1) extend the record and keep `from_dict` tolerant of old lines;
-  (2) add export to JSON and CSV (stdlib `csv`); (3) "Re-run" rebuilds a
-  `LastBuildRequest` (item 21) and prefills the form; (4) on each completed
-  build, append a timing sample and refresh the rolling averages.
+  (2) add export to JSON and CSV (stdlib `csv`); (3) "Re-run" prefills the form
+  with the recorded project/mode; (4) on each completed build, append a timing
+  sample so the next estimate is computed from real history.
 * **Verify:** unit test round-trips old and new history lines, exports a CSV
   with a header, and asserts a completed build appends exactly one timing
   sample that changes the next estimate.

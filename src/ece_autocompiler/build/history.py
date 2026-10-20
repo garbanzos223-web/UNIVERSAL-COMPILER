@@ -26,11 +26,13 @@ class BuildRecord:
     project_path: str
     project_type: str = ""
     adapter_id: str = ""
+    mode: str = "ece"                 # "ece" or "exe"
     ok: bool = False
     exit_code: int = -1
     duration_seconds: float = 0.0
     container_path: str = ""
     artifact_count: int = 0
+    sha256: str = ""
     message: str = ""
     diagnostics: list[str] = field(default_factory=list)
 
@@ -64,8 +66,10 @@ def make_record(
     duration_seconds: float = 0.0,
     adapter_id: str = "",
     project_type: str = "",
+    mode: str = "ece",
     container_path: Path | None = None,
     artifact_count: int = 0,
+    sha256: str = "",
     message: str = "",
     diagnostics: list[str] | None = None,
 ) -> BuildRecord:
@@ -74,36 +78,43 @@ def make_record(
         project_path=str(project_path),
         project_type=project_type,
         adapter_id=adapter_id,
+        mode=mode,
         ok=ok,
         exit_code=exit_code,
         duration_seconds=duration_seconds,
         container_path=str(container_path) if container_path else "",
         artifact_count=artifact_count,
+        sha256=sha256,
         message=message,
         diagnostics=diagnostics or [],
     )
 
 
 def load(*, base: Path, limit: int = 100) -> list[BuildRecord]:
-    path = _history_path(base)
-    if not path.exists():
-        return []
+    return load_report(base=base)[0][-limit:]
+
+
+def load_all(*, base: Path) -> list[BuildRecord]:
+    """Every stored record (used by exports)."""
+    return load_report(base=base)[0]
+
+
+def load_report(*, base: Path) -> tuple[list[BuildRecord], str]:
+    """Load records plus a human note when a damaged file had to be repaired.
+
+    Uses the atomic/quarantine reader so a half-written history file is repaired
+    from its ``.bak`` instead of making the history unusable (item 24).
+    """
+    from ..local_store import read_jsonl
+
+    result = read_jsonl(_history_path(base))
     records: list[BuildRecord] = []
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    records.append(BuildRecord.from_dict(json.loads(line)))
-                except (json.JSONDecodeError, TypeError):
-                    # Skip a corrupt line rather than failing the whole history.
-                    continue
-    except OSError as exc:
-        log.warning("Could not read build history: %s", exc)
-        return []
-    return records[-limit:]
+    for raw in result.value:
+        try:
+            records.append(BuildRecord.from_dict(raw))
+        except (TypeError, ValueError):
+            continue
+    return records, (result.detail if result.recovered else "")
 
 
 def clear(*, base: Path) -> None:
