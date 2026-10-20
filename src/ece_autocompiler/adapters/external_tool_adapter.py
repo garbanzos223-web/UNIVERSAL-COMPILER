@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..detection import get_tool
+from .native_plans import build_steps
 from .base import (
     Artifact,
     BuildAdapter,
@@ -50,183 +51,16 @@ def _tool_for_adapter(adapter_id: str) -> str | None:
     return mapping.get(adapter_id)
 
 
-def _parallel_jobs() -> str:
-    """Number of parallel build jobs to use (the machine's CPU count)."""
-    import os
-
-    count = os.cpu_count() or 1
-    return str(max(1, min(count, 64)))
-
-
 def _default_steps(adapter_id: str, tool_id: str | None, root: Path) -> list[BuildPlanStep]:
-    steps: list[BuildPlanStep] = []
+    """The build steps of one tool-gated language.
+
+    The steps live in :mod:ece_autocompiler.adapters.native_plans, one
+    builder per language, so adding a toolchain never means editing a shared
+    function.
+    """
     tool = get_tool(tool_id) if tool_id else None
     exe = tool.path if tool and tool.path else (tool_id or "unknown")
-    if adapter_id == "dotnet" and tool_id == "dotnet":
-        steps.append(
-            BuildPlanStep(
-                id="dotnet-publish",
-                title="Build with dotnet publish (SDK required)",
-                cmd_args=[exe, "publish", "-c", "Release"],
-                workdir=root,
-                requires_approval=True,
-                timeout=1200,
-            )
-        )
-    elif adapter_id in ("rust-cargo", "rust") and tool_id == "cargo":
-        steps.append(
-            BuildPlanStep(
-                id="cargo-build",
-                title="Build with cargo build --release",
-                cmd_args=[exe, "build", "--release"],
-                workdir=root,
-                requires_approval=False,
-                timeout=1200,
-            )
-        )
-    elif adapter_id == "go" and tool_id == "go":
-        steps.append(
-            BuildPlanStep(
-                id="go-build",
-                title="Build with go build ./...",
-                cmd_args=[exe, "build", "./..."],
-                workdir=root,
-                requires_approval=False,
-                timeout=600,
-            )
-        )
-    elif adapter_id == "java-maven" and tool_id == "mvn":
-        steps.append(
-            BuildPlanStep(
-                id="mvn-package",
-                title="Build with mvn package",
-                cmd_args=[exe, "package", "-DskipTests"],
-                workdir=root,
-                requires_approval=True,
-                timeout=1200,
-            )
-        )
-    elif adapter_id in ("java-gradle", "kotlin-gradle") and tool_id == "gradle":
-        steps.append(
-            BuildPlanStep(
-                id="gradle-build",
-                title="Build with gradle build",
-                cmd_args=[exe, "build", "-x", "test"],
-                workdir=root,
-                requires_approval=True,
-                timeout=1200,
-            )
-        )
-    elif adapter_id == "cpp-cmake" and tool_id == "cmake":
-        # Configuring runs the project's CMakeLists.txt, which is
-        # project-controlled code: it needs the usual consent.
-        steps.append(
-            BuildPlanStep(
-                id="cmake-configure",
-                title="Configure with cmake",
-                cmd_args=[exe, "-S", ".", "-B", "build"],
-                workdir=root,
-                requires_approval=True,
-                timeout=300,
-            )
-        )
-        steps.append(
-            BuildPlanStep(
-                id="cmake-build",
-                title="Build with cmake --build (parallel)",
-                cmd_args=[
-                    exe, "--build", "build", "--config", "Release",
-                    "--parallel", _parallel_jobs(),
-                ],
-                workdir=root,
-                requires_approval=True,
-                timeout=1800,
-            )
-        )
-    elif adapter_id == "cpp-meson" and tool_id == "ninja":
-        meson = get_tool("meson")
-        ninja_exe = tool.path if tool and tool.path else "ninja"
-        if meson and meson.found:
-            steps.append(
-                BuildPlanStep(
-                    id="meson-setup",
-                    title="Configure with meson setup",
-                    cmd_args=[meson.path, "setup", "build", "--buildtype=release"],
-                    workdir=root,
-                    requires_approval=True,
-                    timeout=300,
-                )
-            )
-            steps.append(
-                BuildPlanStep(
-                    id="ninja-build",
-                    title="Build with ninja (parallel)",
-                    cmd_args=[ninja_exe, "-C", "build", "-j", _parallel_jobs()],
-                    workdir=root,
-                    requires_approval=True,
-                    timeout=1800,
-                )
-            )
-        else:
-            steps.append(
-                BuildPlanStep(
-                    id="meson-missing",
-                    title="Meson is required to configure this project",
-                    cmd_args=[],
-                    workdir=root,
-                    requires_approval=False,
-                )
-            )
-    elif adapter_id == "cpp-make" and tool_id == "make":
-        steps.append(
-            BuildPlanStep(
-                id="make",
-                title="Build with make (parallel)",
-                cmd_args=[exe, "-j", _parallel_jobs()],
-                workdir=root,
-                requires_approval=False,
-                timeout=1800,
-            )
-        )
-    elif adapter_id == "php" and tool_id == "php":
-        php_files = sorted(
-            p for p in root.rglob("*.php") if ".git" not in p.parts
-        )
-        if php_files:
-            # One lint step per file; argv lists avoid shell glob expansion.
-            for index, php_file in enumerate(php_files[:200]):
-                steps.append(
-                    BuildPlanStep(
-                        id=f"php-lint-{index}",
-                        title=f"Syntax check {php_file.name}",
-                        cmd_args=[exe, "-l", str(php_file)],
-                        workdir=root,
-                        requires_approval=False,
-                        timeout=60,
-                    )
-                )
-        else:
-            steps.append(
-                BuildPlanStep(
-                    id="php-none",
-                    title="No PHP files to check",
-                    cmd_args=[],
-                    workdir=root,
-                    requires_approval=False,
-                )
-            )
-    else:
-        # Engine or unsupported: no automatic build steps.
-        steps.append(
-            BuildPlanStep(
-                id="noop",
-                title="No automatic build steps for this adapter in this environment",
-                cmd_args=[],
-                workdir=root,
-                requires_approval=False,
-            )
-        )
-    return steps
+    return build_steps(adapter_id, tool_id, root, exe)
 
 
 class ExternalToolAdapter(BuildAdapter):

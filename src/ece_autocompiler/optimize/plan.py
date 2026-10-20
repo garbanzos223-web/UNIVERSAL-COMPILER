@@ -180,7 +180,10 @@ def build_optimization_plan(
 
     if not family:
         plan.unsupported_reason = (
-            f"The '{adapter_id}' project type has no compiler options this tool can set."
+            "No project type was detected for this folder, so there are no compiler "
+            "options to set. Run 'analyze' to see what was detected."
+            if not adapter_id
+            else f"The '{adapter_id}' project type has no compiler options this tool can set."
         )
         return plan
 

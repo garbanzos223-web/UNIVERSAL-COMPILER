@@ -28,7 +28,7 @@ from ..config import AppConfig
 from ..detection import scan
 from ..detection.toolchains import get_tool
 from ..logging_config import get_logger
-from .process import run_command, RunResult
+from .process import parallel_jobs, run_command, RunResult
 from .workdirs import new_work_dir, sweep_work_dirs
 
 log = get_logger("build.exe")
@@ -664,12 +664,13 @@ def _compile_native(
         build_dir = work / "cmake-build"
         _add("cmake-configure", "cmake configure",
              [get_tool("cmake").path or "cmake", "-S", str(project), "-B", str(build_dir)])
-        _add("cmake-build", "cmake --build (Release)",
-             [get_tool("cmake").path or "cmake", "--build", str(build_dir), "--config", "Release"])
+        _add("cmake-build", "cmake --build (Release, parallel)",
+             [get_tool("cmake").path or "cmake", "--build", str(build_dir),
+              "--config", "Release", "--parallel", parallel_jobs()])
         target_dir = build_dir
     elif adapter_id == "cpp-make":
-        _add("make-build", "make (Release)",
-             [get_tool("make").path or "make", "RELEASE=1"], wd=project)
+        _add("make-build", "make (Release, parallel)",
+             [get_tool("make").path or "make", "-j", parallel_jobs(), "RELEASE=1"], wd=project)
         target_dir = project
     else:  # pragma: no cover - guarded by _NATIVE_TOOLS
         return ExeExportResult(ok=False, exe_path=None, language=label,

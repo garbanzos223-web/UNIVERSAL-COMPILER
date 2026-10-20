@@ -145,6 +145,66 @@ class LaunchProbeTests(unittest.TestCase):
         self.assertIn("could not be started", detail)
 
 
+class FunctionalProbeTests(unittest.TestCase):
+    """The release check must prove the product works, not only that it starts."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="ece_probe_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _runner(self, *, fail_on: str = ""):
+        import zipfile
+
+        def runner(argv, **_kwargs):
+            command = " ".join(argv)
+            if fail_on and fail_on in command:
+                return SimpleNamespace(returncode=1, stdout="", stderr="boom")
+            if " build " in f" {command} ":
+                container = Path(argv[argv.index("-o") + 1])
+                container.write_bytes(b"container")
+            elif " package " in f" {command} ":
+                out_dir = Path(argv[argv.index("--output-dir") + 1])
+                out_dir.mkdir(parents=True, exist_ok=True)
+                with zipfile.ZipFile(out_dir / "demo-1.0.0.zip", "w") as archive:
+                    archive.writestr("app.py", "print(1)")
+                    archive.writestr("package-manifest.json", "{}")
+            return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+        return runner
+
+    def test_a_working_cli_passes_the_probe(self) -> None:
+        ok, lines = release_check.functional_probe(
+            Path("cli.exe"), work=self.tmp, runner=self._runner()
+        )
+        self.assertTrue(ok, msg=str(lines))
+        self.assertTrue(any("manifest" in line for line in lines))
+
+    def test_a_failing_build_fails_the_probe(self) -> None:
+        ok, lines = release_check.functional_probe(
+            Path("cli.exe"), work=self.tmp, runner=self._runner(fail_on=" build ")
+        )
+        self.assertFalse(ok)
+        self.assertTrue(lines)
+
+    def test_a_failing_package_fails_the_probe(self) -> None:
+        ok, lines = release_check.functional_probe(
+            Path("cli.exe"), work=self.tmp, runner=self._runner(fail_on=" package ")
+        )
+        self.assertFalse(ok)
+        self.assertTrue(lines)
+
+    def test_the_probe_does_not_touch_the_real_application_data(self) -> None:
+        seen: dict = {}
+
+        def runner(argv, **kwargs):
+            seen.update(kwargs.get("env") or {})
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+        release_check.functional_probe(Path("cli.exe"), work=self.tmp, runner=runner)
+        self.assertIn("ECE_AUTOCOMPILER_HOME", seen)
+        self.assertIn(str(self.tmp), seen["ECE_AUTOCOMPILER_HOME"])
+
+
 class ChecklistTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="ece_reldist_"))

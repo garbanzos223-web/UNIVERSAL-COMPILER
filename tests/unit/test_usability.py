@@ -442,7 +442,7 @@ class NewCliCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("Build plan for", out)
         # No output file was produced (the config's empty folder may exist).
-        outputs = list((self.home / "ECE-Universal-AutoCompiler" / "output").glob("*.ece"))
+        outputs = list((self.home / "app" / "output").glob("*.ece"))
         self.assertEqual(outputs, [])
 
     def test_build_records_timing_and_uses_it_next_time(self) -> None:
@@ -480,7 +480,7 @@ class NewCliCommandTests(unittest.TestCase):
         self.assertTrue(first["ok"])
         self.assertIsNone(first["estimated_seconds"])
 
-        timings = self.home / "ECE-Universal-AutoCompiler" / "work" / "timings.jsonl"
+        timings = self.home / "app" / "work" / "timings.jsonl"
         self.assertTrue(timings.is_file())
         self.assertIn('"adapter_id":"python"', timings.read_text(encoding="utf-8"))
 

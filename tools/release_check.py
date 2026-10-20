@@ -21,9 +21,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -155,6 +157,93 @@ def _stop_probe(proc, *, external: bool) -> None:
         pass
 
 
+def _run_cli(
+    exe: Path,
+    args: list[str],
+    *,
+    env: dict[str, str],
+    timeout: int = 300,
+    runner=None,
+) -> tuple[int, str]:
+    """Run the shipped CLI and return ``(exit_code, output)``."""
+    run = runner or subprocess.run
+    try:
+        proc = run(
+            [str(exe), *args],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=timeout,
+            env=env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, f"could not be run: {exc}"
+    return proc.returncode, f"{proc.stdout or ''}{proc.stderr or ''}".strip()
+
+
+def functional_probe(
+    cli_exe: Path,
+    *,
+    work: Path,
+    runner=None,
+    timeout: int = 300,
+) -> tuple[bool, list[str]]:
+    """Build, validate and package a throwaway project with the shipped CLI.
+
+    This is the check that proves the product works, not just that it starts:
+    the console build has to produce a real container, validate it, and create a
+    real distributable package.
+    """
+    lines: list[str] = []
+    project = work / "demo"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "app.py").write_text("print('release probe')\n", encoding="utf-8")
+    container = work / "demo.ece"
+    packages = work / "packages"
+
+    env = os.environ.copy()
+    env["ECE_AUTOCOMPILER_HOME"] = str(work / "home")
+
+    code, output = _run_cli(
+        cli_exe,
+        ["build", str(project), "-o", str(container), "--consent"],
+        env=env,
+        timeout=timeout,
+        runner=runner,
+    )
+    if code != 0 or not container.is_file():
+        lines.append(f"build failed (exit {code}): {output[-300:]}")
+        return False, lines
+    lines.append(f"built {container.name} ({container.stat().st_size} bytes)")
+
+    code, output = _run_cli(
+        cli_exe, ["validate", str(container), "--deep"], env=env, timeout=timeout, runner=runner
+    )
+    if code != 0:
+        lines.append(f"validate failed (exit {code}): {output[-300:]}")
+        return False, lines
+    lines.append("validated the container (deep)")
+
+    code, output = _run_cli(
+        cli_exe,
+        ["package", str(project), "--output-dir", str(packages), "--format", "zip"],
+        env=env,
+        timeout=timeout,
+        runner=runner,
+    )
+    archives = sorted(packages.glob("*.zip"))
+    if code != 0 or not archives:
+        lines.append(f"package failed (exit {code}): {output[-300:]}")
+        return False, lines
+    with zipfile.ZipFile(archives[0]) as archive:
+        names = archive.namelist()
+    if "package-manifest.json" not in names:
+        lines.append("the package has no manifest")
+        return False, lines
+    lines.append(f"packaged {archives[0].name} with its manifest")
+    return True, lines
+
+
 class ArtifactCheck:
     """One verified artifact: size, hash and the checks it had to pass."""
 
@@ -193,6 +282,9 @@ def check_artifacts(
     cli_runner=None,
     gui_popen=None,
     wait_seconds: float = 5.0,
+    functional: bool = False,
+    functional_runner=None,
+    work: Path | None = None,
 ) -> list[ArtifactCheck]:
     """Verify the console and desktop builds in *dist*; never raises."""
     gui = ArtifactCheck("desktop (GUI)", dist / GUI_EXE_NAME)
@@ -221,7 +313,34 @@ def check_artifacts(
             )
             artifact.add("starts and stays alive", ok, detail)
 
+    if functional and cli.path.is_file():
+        if not _is_windows_executable(cli.path):
+            cli.add(
+                "builds, validates and packages a project",
+                True,
+                "skipped (not a Windows executable)",
+            )
+        else:
+            probe_dir = work or (dist / "release-probe")
+            try:
+                probe_dir.mkdir(parents=True, exist_ok=True)
+                ok, lines = functional_probe(
+                    cli.path, work=probe_dir, runner=functional_runner
+                )
+            except OSError as exc:
+                ok, lines = False, [f"the probe folder could not be used: {exc}"]
+            cli.add("builds, validates and packages a project", ok, "; ".join(lines))
+
     return [gui, cli]
+
+
+def _is_windows_executable(path: Path) -> bool:
+    """True when the file starts with the MZ signature of a Windows program."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"MZ"
+    except OSError:
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -242,11 +361,19 @@ def main(argv: list[str] | None = None) -> int:
         default=5.0,
         help="seconds the desktop build must stay alive (default: 5)",
     )
+    parser.add_argument(
+        "--skip-functional",
+        action="store_true",
+        help="do not build, validate and package a throwaway project with the CLI",
+    )
     args = parser.parse_args(argv)
 
     dist = Path(args.dist)
     artifacts = check_artifacts(
-        dist, skip_launch=args.skip_launch, wait_seconds=args.wait
+        dist,
+        skip_launch=args.skip_launch,
+        wait_seconds=args.wait,
+        functional=not args.skip_functional,
     )
 
     print(f"{APP_NAME} {APP_VERSION} - release check")

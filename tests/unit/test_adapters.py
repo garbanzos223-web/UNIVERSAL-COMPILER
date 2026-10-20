@@ -124,6 +124,39 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("ninja", ids)
 
 
+class NativePlanRegistryTests(unittest.TestCase):
+    """Every language keeps its own builder, so adding one never edits a shared function."""
+
+    def test_every_tool_gated_adapter_has_a_builder(self) -> None:
+        from ece_autocompiler.adapters import native_plans
+
+        # Unity and Unreal are engines: they have no command line build here.
+        engines = {"python", "node", "unity", "unreal"}
+        for adapter in AdapterRegistry().all():
+            if adapter.adapter_id in engines:
+                continue
+            self.assertIn(adapter.adapter_id, native_plans.BUILDERS, adapter.adapter_id)
+
+    def test_builders_return_steps_with_an_id_and_a_title(self) -> None:
+        from ece_autocompiler.adapters import native_plans
+
+        root = Path(tempfile.mkdtemp())
+        for adapter_id, builder in native_plans.BUILDERS.items():
+            steps = builder("tool", "tool.exe", root)
+            self.assertTrue(steps, adapter_id)
+            for step in steps:
+                self.assertTrue(step.id, adapter_id)
+                self.assertTrue(step.title, adapter_id)
+
+    def test_an_unknown_adapter_gets_a_noop_plan(self) -> None:
+        from ece_autocompiler.adapters import native_plans
+
+        steps = native_plans.build_steps("not-a-language", None, Path("."), "unknown")
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].id, "noop")
+        self.assertEqual(steps[0].cmd_args, [])
+
+
 def _fake_tool(tool_id: str):
     """A ToolInfo that looks like an installed tool."""
     from ece_autocompiler.detection.toolchains import ToolInfo

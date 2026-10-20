@@ -7,20 +7,20 @@ or corrupt .ece file cannot exhaust memory or fill the disk.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .local_store import app_data_dir
+
 
 def _default_output_dir() -> Path:
-    """Return a writable default output directory that does not depend on cwd."""
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or str(Path.home())
-    return Path(base) / "ECE-Universal-AutoCompiler" / "output"
+    """Writable default output directory; never depends on the current folder."""
+    return app_data_dir() / "output"
 
 
 def _default_work_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or str(Path.home())
-    return Path(base) / "ECE-Universal-AutoCompiler" / "work"
+    """Writable default work directory; never depends on the current folder."""
+    return app_data_dir() / "work"
 
 
 @dataclass(frozen=True)

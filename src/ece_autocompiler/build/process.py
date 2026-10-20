@@ -56,6 +56,17 @@ def _now() -> float:
     return time.perf_counter()
 
 
+def parallel_jobs() -> str:
+    """How many build jobs may run in parallel (the machine's CPU count).
+
+    Build tools that support parallel jobs (``cmake --parallel``, ``ninja -j``,
+    ``make -j``) use this value. It is capped so a huge machine does not
+    exhaust its memory.
+    """
+    count = os.cpu_count() or 1
+    return str(max(1, min(count, 64)))
+
+
 def _kill_process_tree(proc: subprocess.Popen) -> None:
     try:
         if os.name == "nt":
