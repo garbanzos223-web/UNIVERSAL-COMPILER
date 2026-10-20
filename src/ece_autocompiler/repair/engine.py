@@ -326,7 +326,7 @@ class RepairEngine:
                 exit_code=build.exit_code,
                 errors=build.errors,
             )
-            still_there = _still_failing(new_analysis, analysis, proposal)
+            still_there = _repair_did_not_help(new_analysis, analysis, proposal)
             if still_there:
                 attempt.verification = "not-resolved"
                 attempt.error_after = (
@@ -373,15 +373,22 @@ class RepairEngine:
         return outcome
 
 
-def _still_failing(
+def _repair_did_not_help(
     new_analysis: FailureAnalysis,
     old_analysis: FailureAnalysis,
     proposal: RepairProposal,
 ) -> bool:
-    """True when the error the proposal targeted is still reported.
+    """True when the change has to be undone.
 
-    When the new output cannot be parsed at all, the repair cannot be
-    verified; the safe answer is to undo the change.
+    The change is undone when:
+
+    * the error it targeted is still reported (the fix did not work);
+    * the new output cannot be parsed at all (the repair cannot be verified);
+    * the build now reports **more** errors than before (the change made
+      things worse).
+
+    A fix that removes one error and reveals the next one is kept: the count
+    stays the same and the project is one step further.
     """
     old_error = old_analysis.first_error
     if old_error is None:
@@ -397,5 +404,8 @@ def _still_failing(
         and new_error.code == old_error.code
         and new_error.message == old_error.message
     ):
+        return True
+    # More errors than before: the change introduced new problems.
+    if len(new_analysis.errors) > len(old_analysis.errors):
         return True
     return False

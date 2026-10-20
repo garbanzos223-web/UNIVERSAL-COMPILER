@@ -164,6 +164,9 @@ Everything else is **explained, not changed**: the analysis lists what to do
   `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\repair-backups\<run>\` before
   it is touched.
 * A repair that does not remove the error it targeted is **rolled back**.
+* A repair that makes the build report **more** errors than before is
+  **rolled back** as well. A repair that removes one error and reveals the
+  next one is kept: the project is one step further.
 * A repair that makes the test suite fail (when a test command is given) is
   **rolled back**.
 * The same error twice in a row stops the loop.

@@ -327,6 +327,39 @@ class RepairEngineTests(unittest.TestCase):
         self.assertTrue(outcome.final_ok)
         self.assertEqual(outcome.attempts, [])
 
+    def test_a_change_that_adds_errors_is_rolled_back(self) -> None:
+        original = "if True\n    print(1)\n"
+        self.source.write_text(original, encoding="utf-8")
+        calls = {"count": 0}
+
+        def runner() -> BuildOutcome:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                output = (
+                    '  File "app.py", line 1\n'
+                    "    if True\n"
+                    "        ^\n"
+                    "SyntaxError: expected ':'\n"
+                )
+                return BuildOutcome(ok=False, output=output, exit_code=1)
+            # The repair compiled, but now two other errors are reported.
+            output = (
+                '  File "app.py", line 1\n'
+                "    x = 1\n"
+                "        ^\n"
+                "SyntaxError: invalid syntax\n"
+                '  File "app.py", line 2\n'
+                "    y = 2\n"
+                "        ^\n"
+                "SyntaxError: invalid syntax\n"
+            )
+            return BuildOutcome(ok=False, output=output, exit_code=1)
+
+        outcome = self.engine.repair(self.project, runner)
+        self.assertFalse(outcome.final_ok)
+        self.assertTrue(outcome.reverted)
+        self.assertEqual(self.source.read_text(encoding="utf-8"), original)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
