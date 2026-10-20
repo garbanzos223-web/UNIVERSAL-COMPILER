@@ -94,6 +94,9 @@ python -m ece_autocompiler package path\to\project --output-dir out
 # Build first, then package as a Windows installer
 python -m ece_autocompiler package path\to\project --format inno --build --consent
 
+# Build with an optimization profile, then package
+python -m ece_autocompiler package path\to\project --build --profile release --consent
+
 # Only the files that match, with a reproducible archive
 python -m ece_autocompiler package path\to\project --include "dist/*" --include "README.md"
 
@@ -101,7 +104,8 @@ python -m ece_autocompiler package path\to\project --include "dist/*" --include 
 python -m ece_autocompiler package path\to\project --json
 ```
 
-In the desktop window: **Tools → Create distributable package...**
+In the desktop window: **Tools → Create distributable package...** (the dialog
+also has the optimization profile used when it runs the build first).
 
 ---
 

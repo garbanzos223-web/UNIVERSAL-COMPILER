@@ -2346,13 +2346,30 @@ class PackageDialog(_Dialog):
             row=11, column=2, columnspan=2, sticky="w"
         )
 
+        from ..optimize.profiles import profile_keys
+
+        self.profile_var = tk.StringVar(value="none")
+        ttk.Label(body, text="Profile", style="Muted.TLabel").grid(
+            row=12, column=0, sticky="w", pady=(8, 0)
+        )
+        self.profile_box = ttk.Combobox(
+            body, textvariable=self.profile_var, state="readonly", width=14,
+            values=profile_keys(),
+        )
+        self.profile_box.grid(row=12, column=1, sticky="w", pady=(8, 0))
+        add_tooltip(
+            self.profile_box,
+            "Optimization profile used when the build runs before packaging.\n"
+            "none: the project builds exactly as it asks.",
+        )
+
         self.status_var = tk.StringVar(value="Choose the format and press Create package.")
         ttk.Label(body, textvariable=self.status_var, style="Muted.TLabel", wraplength=760,
-                  justify="left").grid(row=12, column=0, columnspan=4, sticky="w", pady=(10, 4))
+                  justify="left").grid(row=13, column=0, columnspan=4, sticky="w", pady=(10, 4))
 
         self.output_box = _readonly_text(body, "", height=10)
-        self.output_box.grid(row=13, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
-        body.rowconfigure(13, weight=1)
+        self.output_box.grid(row=14, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
+        body.rowconfigure(14, weight=1)
 
         row = ttk.Frame(self, padding=(12, 6, 12, 12))
         row.pack(fill="x")
@@ -2389,6 +2406,7 @@ class PackageDialog(_Dialog):
             self.output_var.set(path)
 
     def _create(self) -> None:
+        from ..optimize.plan import OptimizationRequest, build_optimization_plan
         from ..packaging import AdvancedPackager, PackageMetadata, PackageRequest
 
         output = self.output_var.get().strip()
@@ -2402,6 +2420,16 @@ class PackageDialog(_Dialog):
             publisher=self.publisher_var.get().strip(),
             architecture=self.arch_var.get().strip() or "x64",
         )
+        optimization = None
+        profile = self.profile_var.get().strip().lower()
+        if profile and profile != "none":
+            optimization = build_optimization_plan(
+                self._prefer_adapter or "",
+                OptimizationRequest.from_args(profile, []),
+            )
+            if optimization.unsupported_reason:
+                self.status_var.set(optimization.unsupported_reason)
+                return
         request = PackageRequest(
             project=self.project,
             output_dir=Path(output),
@@ -2413,6 +2441,7 @@ class PackageDialog(_Dialog):
             consent=self.consent_var.get(),
             prefer_adapter=self._prefer_adapter,
             overwrite=True,
+            optimization=optimization,
         )
         self.create_btn.configure(state="disabled")
         self.status_var.set("Packaging...")

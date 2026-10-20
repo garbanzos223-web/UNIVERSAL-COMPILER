@@ -93,6 +93,8 @@ class PackageRequest:
     readme: Path | None = None
     overwrite: bool = False
     timeout: int = 1800
+    #: Optimization plan applied to the build (see ``ece_autocompiler.optimize``).
+    optimization: object = None
 
     def to_dict(self) -> dict:
         return {

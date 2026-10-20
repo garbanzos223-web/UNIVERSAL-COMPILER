@@ -260,6 +260,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_package.add_argument(
         "--build", action="store_true", help="Run the build before packaging the result."
     )
+    p_package.add_argument(
+        "--profile",
+        default="none",
+        help="Optimization profile for the build (default: none).",
+    )
+    p_package.add_argument(
+        "--custom-flags",
+        action="append",
+        default=[],
+        help="Extra compiler options for the 'custom' profile (repeatable).",
+    )
     p_package.add_argument("--consent", action="store_true", help="Allow steps that run project scripts.")
     p_package.add_argument("--adapter", help="Force a specific adapter (for monorepos).")
     p_package.add_argument("--overwrite", action="store_true", help="Overwrite an existing package.")
@@ -805,6 +816,33 @@ def cmd_package(args) -> int:
     )
 
     packager = AdvancedPackager(config=cfg)
+
+    optimization = None
+    if args.profile and args.profile != "none":
+        from .optimize.plan import OptimizationRequest, build_optimization_plan
+
+        adapter_guess = args.adapter or ""
+        if not adapter_guess:
+            try:
+                detected = scan(root)
+                if detected.best is not None:
+                    adapter_guess = detected.best.adapter_id
+            except EceError:
+                detected = None
+        optimization = build_optimization_plan(
+            adapter_guess,
+            OptimizationRequest.from_args(args.profile, args.custom_flags),
+        )
+        if optimization.unsupported_reason:
+            _print("What happened: this project cannot be optimized with that profile.")
+            _print(f"Why: {optimization.unsupported_reason}")
+            _print("What to do: pick another profile, or package without --profile.")
+            return EXIT_ERROR
+        if not (_quiet(args) or _wants_json(args)):
+            for line in optimization.text().splitlines():
+                _print(line)
+
+    request.optimization = optimization
     result = packager.package(request, progress=_progress_printer(args))
 
     from .build.history import append as history_append, make_record

@@ -155,6 +155,7 @@ class AdvancedPackager:
                 prefer_adapter=request.prefer_adapter,
                 progress=progress,
                 package_only=not request.run_build,
+                optimization=request.optimization,
             )
         except ConfigurationError as exc:
             result.message = f"The project could not be prepared: {exc}"
