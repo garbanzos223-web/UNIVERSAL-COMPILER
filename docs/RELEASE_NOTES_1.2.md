@@ -97,7 +97,7 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 
 ## Verified
 
-- 392 tests pass (1 skipped), including unit, integration and GUI smoke tests.
+- 419 tests pass (1 skipped), including unit, integration and GUI smoke tests.
 - `python tools/lint_stdlib.py` reports 85 files clean.
 - The release build was verified with `scripts\build_exe.ps1`: both binaries
   were rebuilt, the desktop build starts and stays alive, and the **console
@@ -109,6 +109,9 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 - The automatic repair was verified end to end on a project with a real syntax
   error: the error was parsed, the missing colon was proposed with a diff, the
   change was applied, the project was rebuilt and the repair was kept.
+- The command line was measured on a project with 3000 files: the project
+  scan went from 207 ms to 18 ms and the whole build from 808 ms to 388 ms,
+  after caching the toolchain probe (`tools`: 1392 ms -> 173 ms).
 
 ## Notes and limits
 
