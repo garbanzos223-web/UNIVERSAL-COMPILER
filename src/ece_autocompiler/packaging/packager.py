@@ -26,7 +26,7 @@ from .collection import collect_files, detect_dependencies, detect_entry_point
 from .formats import get_format
 from .licenses import find_licenses, redistribution_warnings
 from .manifest import build_manifest, detected_toolchains
-from .models import PackageFile, PackageRequest, PackageResult
+from .models import PackageFile, PackagePlan, PackageRequest, PackageResult
 from .validation import digest_of, size_of, validate_package
 
 log = get_logger("packaging")
@@ -66,8 +66,8 @@ class AdvancedPackager:
                 problems.append(f"{item.rel_path} could not be staged: {exc}")
         return problems
 
-    def _stage_extra(self, staging: Path, request: PackageRequest) -> list[PackageFile]:
-        """Add the license, the README and the icon the user asked for."""
+    def _extra_files(self, request: PackageRequest) -> list[PackageFile]:
+        """The license, the README and the icon the user asked for."""
         extra: list[PackageFile] = []
         from ..container.integrity import sha256_file
 
@@ -102,6 +102,11 @@ class AdvancedPackager:
                     kind="asset",
                 )
             )
+        return extra
+
+    def _stage_extra(self, staging: Path, request: PackageRequest) -> list[PackageFile]:
+        """Add the license, the README and the icon to the staged package."""
+        extra = self._extra_files(request)
         for item in extra:
             target = staging / item.rel_path
             try:
@@ -110,6 +115,104 @@ class AdvancedPackager:
             except OSError as exc:
                 log.warning("Could not stage %s: %s", item.rel_path, exc)
         return extra
+
+    # ------------------------------------------------------------------
+    def prepare(self, request: PackageRequest, *, progress=None):
+        """Everything a packaging run needs, decided without writing anything.
+
+        Returns ``(plan, compiled)``. The plan carries the files that would be
+        packaged, the dependency findings and the license notices; ``compiled``
+        is the build result (None when the project could not be prepared).
+        """
+        from ..build import BuildOrchestrator
+        from ..errors import ConfigurationError
+
+        plan = PackagePlan(fmt=request.fmt, metadata=request.metadata.to_dict())
+        project = Path(request.project)
+        if not project.exists() or not project.is_dir():
+            plan.ok = False
+            plan.errors.append(f"The project folder does not exist: {project}")
+            return plan, None
+
+        if get_format(request.fmt) is None:
+            from .formats import format_ids
+
+            plan.ok = False
+            plan.errors.append(
+                f"'{request.fmt}' is not a supported package format. "
+                "Supported formats: " + ", ".join(format_ids())
+            )
+            return plan, None
+
+        orchestrator = BuildOrchestrator(config=self.config)
+        try:
+            compiled = orchestrator.compile_project(
+                project,
+                consent_granted=request.consent,
+                prefer_adapter=request.prefer_adapter,
+                progress=progress,
+                package_only=not request.run_build,
+                optimization=request.optimization,
+            )
+        except ConfigurationError as exc:
+            plan.ok = False
+            plan.errors.append(str(exc))
+            if "consent" in str(exc).lower():
+                plan.errors.append(
+                    "Allow the project scripts (consent) and run the packaging "
+                    "command again, or package what is already built without --build."
+                )
+            return plan, None
+        except Exception as exc:  # noqa: BLE001 - reported, never raised to the user
+            plan.ok = False
+            plan.errors.append(str(exc))
+            return plan, None
+
+        plan.adapter_id = compiled.adapter_id
+        if not compiled.result.ok:
+            plan.ok = False
+            plan.errors.extend(compiled.result.errors[-10:])
+            plan.errors.append(
+                "Fix the build errors and run the packaging command again."
+            )
+            return plan, compiled
+
+        project_dir = compiled.project_dir or project
+        files, issues = collect_files(project_dir, compiled.artifacts, request)
+        plan.dependencies.extend(issues)
+        if not files:
+            plan.ok = False
+            plan.errors.append(
+                "No file matched the selection. Check the include and exclude patterns."
+            )
+            return plan, compiled
+
+        entry_point = detect_entry_point(project_dir, compiled.artifacts, compiled.adapter_id)
+        if not entry_point:
+            plan.warnings.append(
+                "The application entry point could not be determined automatically; "
+                "the package still contains the built files."
+            )
+        request.metadata.entry_point = entry_point
+        plan.entry_point = entry_point
+
+        plan.dependencies.extend(detect_dependencies(project_dir, compiled.adapter_id, files))
+
+        license_findings = find_licenses(project_dir)
+        plan.licenses = [f.to_dict() for f in license_findings]
+        plan.warnings.extend(
+            redistribution_warnings(license_findings, allow_copyleft=request.allow_copyleft)
+        )
+        plan.files = list(files)
+        plan.files.extend(self._extra_files(request))
+        plan.files.sort(key=lambda f: f.rel_path)
+        return plan, compiled
+
+    # ------------------------------------------------------------------
+    def plan(self, request: PackageRequest, *, progress=None) -> PackagePlan:
+        """What a packaging run would do, without writing anything."""
+        plan, _compiled = self.prepare(request, progress=progress)
+        return plan
 
     # ------------------------------------------------------------------
     def package(self, request: PackageRequest, *, progress=None) -> PackageResult:
@@ -143,74 +246,19 @@ class AdvancedPackager:
             result.errors.append(f"Check that {output_dir} is writable.")
             return result
 
-        # --- detect and build ------------------------------------------
-        from ..build import BuildOrchestrator
-        from ..errors import ConfigurationError
-
-        orchestrator = BuildOrchestrator(config=self.config)
-        try:
-            compiled = orchestrator.compile_project(
-                project,
-                consent_granted=request.consent,
-                prefer_adapter=request.prefer_adapter,
-                progress=progress,
-                package_only=not request.run_build,
-                optimization=request.optimization,
-            )
-        except ConfigurationError as exc:
-            result.message = f"The project could not be prepared: {exc}"
-            result.errors.append(str(exc))
-            if "consent" in str(exc).lower():
-                result.errors.append(
-                    "Allow the project scripts (consent) and run the packaging "
-                    "command again, or package what is already built without --build."
-                )
-            return result
-        except Exception as exc:  # noqa: BLE001 - reported, never raised to the user
-            result.message = f"The project could not be prepared: {exc}"
-            result.errors.append(str(exc))
+        plan, compiled = self.prepare(request, progress=progress)
+        result.adapter_id = plan.adapter_id
+        result.dependencies.extend(plan.dependencies)
+        result.warnings.extend(plan.warnings)
+        if not plan.ok:
+            result.message = "The package could not be prepared."
+            result.errors.extend(plan.errors)
             return result
 
-        result.adapter_id = compiled.adapter_id
-        if not compiled.result.ok:
-            result.message = "The build failed, so no package was created."
-            result.errors.extend(compiled.result.errors[-10:])
-            result.errors.append(
-                "Fix the build errors and run the packaging command again."
-            )
-            return result
-
+        files = plan.files
+        entry_point = plan.entry_point
+        license_findings = find_licenses(Path(request.project))
         project_dir = compiled.project_dir or project
-        artifacts = compiled.artifacts
-
-        # --- collect ----------------------------------------------------
-        files, issues = collect_files(project_dir, artifacts, request)
-        result.dependencies.extend(issues)
-        if not files:
-            result.message = "There was nothing to package."
-            result.errors.append(
-                "No file matched the selection. Check the include and exclude patterns."
-            )
-            return result
-
-        entry_point = detect_entry_point(project_dir, artifacts, compiled.adapter_id)
-        if not entry_point:
-            result.warnings.append(
-                "The application entry point could not be determined automatically; "
-                "the package still contains the built files."
-            )
-        request.metadata.entry_point = entry_point
-
-        result.dependencies.extend(
-            detect_dependencies(project_dir, compiled.adapter_id, files)
-        )
-
-        license_findings = find_licenses(project_dir)
-        result.warnings.extend(
-            redistribution_warnings(
-                license_findings, allow_copyleft=request.allow_copyleft
-            )
-        )
 
         # --- stage ------------------------------------------------------
         staging = self._staging_dir(request)

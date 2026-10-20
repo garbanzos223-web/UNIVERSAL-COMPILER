@@ -110,6 +110,71 @@ class PackageRequest:
 
 
 @dataclass
+class PackagePlan:
+    """What a packaging run would do, decided without doing it."""
+
+    ok: bool = True
+    fmt: str = ""
+    files: list[PackageFile] = field(default_factory=list)
+    dependencies: list[DependencyIssue] = field(default_factory=list)
+    entry_point: str = ""
+    adapter_id: str = ""
+    licenses: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {
+            "ok": self.ok,
+            "format": self.fmt,
+            "file_count": len(self.files),
+            "total_bytes": sum(f.size for f in self.files),
+            "files": [f.to_dict() for f in self.files],
+            "dependencies": [d.to_dict() for d in self.dependencies],
+            "entry_point": self.entry_point,
+            "adapter_id": self.adapter_id,
+            "licenses": list(self.licenses),
+            "warnings": list(self.warnings),
+            "errors": list(self.errors),
+            "metadata": dict(self.metadata),
+        }
+
+    def text(self) -> str:
+        from ..usability.summary import human_size
+
+        lines = [f"Package plan ({self.fmt})"]
+        if self.metadata:
+            lines.append(
+                f"  Application: {self.metadata.get('name', '')} "
+                f"{self.metadata.get('version', '')}"
+            )
+        if self.adapter_id:
+            lines.append(f"  Project    : {self.adapter_id}")
+        if self.entry_point:
+            lines.append(f"  Entry point: {self.entry_point}")
+        lines.append(
+            f"  Files      : {len(self.files)} "
+            f"({human_size(sum(f.size for f in self.files))})"
+        )
+        for item in self.files[:40]:
+            lines.append(f"    {item.rel_path}  ({human_size(item.size)})")
+        if len(self.files) > 40:
+            lines.append(f"    ... and {len(self.files) - 40} more file(s)")
+        for issue in self.dependencies:
+            lines.append(f"  [{issue.severity}] {issue.name}: {issue.detail}")
+            if issue.action:
+                lines.append(f"      {issue.action}")
+        for warning in self.warnings:
+            lines.append(f"  ! {warning}")
+        for error in self.errors:
+            lines.append(f"  x {error}")
+        if not self.ok:
+            lines.append("This package cannot be created as it is.")
+        return "\n".join(lines)
+
+
+@dataclass
 class PackageResult:
     """Outcome of a packaging run."""
 

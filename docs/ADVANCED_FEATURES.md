@@ -28,6 +28,10 @@ faster after a benchmark actually ran.
 7. produce the package in the requested format;
 8. **read the package back** and verify every file against the manifest.
 
+`package --plan` stops after step 4 and shows what would be packaged - the
+files, the entry point, the dependencies and the license notices - without
+writing anything.
+
 ### Formats
 
 | id | Format | Needs | Notes |
@@ -90,6 +94,9 @@ environments) are always excluded.
 ```powershell
 # A ZIP package of what is already built
 python -m ece_autocompiler package path\to\project --output-dir out
+
+# See what would be packaged, without writing anything
+python -m ece_autocompiler package path\to\project --plan
 
 # Build first, then package as a Windows installer
 python -m ece_autocompiler package path\to\project --format inno --build --consent

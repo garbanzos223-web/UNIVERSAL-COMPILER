@@ -293,6 +293,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_package.add_argument("--quiet", action="store_true", help="Suppress progress lines.")
     p_package.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
+    p_package.add_argument(
+        "--plan",
+        action="store_true",
+        help="Show what would be packaged (files, dependencies, licenses) and exit.",
+    )
     p_package.add_argument("--json", action="store_true", help="Emit JSON.")
 
     p_optimize = sub.add_parser(
@@ -849,6 +854,16 @@ def cmd_package(args) -> int:
                 _print(line)
 
     request.optimization = optimization
+
+    if getattr(args, "plan", False):
+        # A dry run: show what would be packaged and write nothing.
+        plan = packager.plan(request, progress=_progress_printer(args))
+        if _wants_json(args):
+            _print_json(plan.as_dict())
+        else:
+            _print(plan.text())
+        return EXIT_OK if plan.ok else EXIT_ERROR
+
     result = packager.package(request, progress=_progress_printer(args))
 
     from .build.history import append as history_append, make_record

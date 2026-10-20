@@ -174,6 +174,23 @@ class ZipPackageTests(PackageTestCase):
             msg=str(result.warnings),
         )
 
+    def test_the_plan_shows_what_would_be_packaged(self) -> None:
+        license_file = self.project / "LICENSE"
+        license_file.write_text("MIT License", encoding="utf-8")
+        request = self.request(license_file=license_file)
+        plan = AdvancedPackager(config=self.config()).plan(request)
+        self.assertTrue(plan.ok, msg=plan.text())
+        paths = {f.rel_path for f in plan.files}
+        self.assertIn("app.py", paths)
+        self.assertIn("LICENSE", paths)
+        self.assertEqual(plan.entry_point, "app.py")
+        # The plan writes nothing.
+        self.assertEqual(list(self.out.glob("*")), [])
+
+    def test_the_plan_reports_what_it_cannot_do(self) -> None:
+        plan = AdvancedPackager(config=self.config()).plan(self.request(fmt="rar"))
+        self.assertFalse(plan.ok)
+
     def test_copyleft_license_needs_confirmation(self) -> None:
         (self.project / "LICENSE").write_text(
             "GNU GENERAL PUBLIC LICENSE Version 3", encoding="utf-8"
