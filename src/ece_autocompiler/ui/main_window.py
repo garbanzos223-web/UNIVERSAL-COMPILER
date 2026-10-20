@@ -2613,15 +2613,22 @@ class OptimizeDialog(_Dialog):
         )
 
         self.compare_btn.configure(state="disabled")
-        self.status_var.set("Building the baseline...")
+        self.status_var.set("Building the baseline (no optimization)...")
 
         def measure_run(profile: str, opt) -> Measurement:
+            def progress(message: str, done: int, total: int) -> None:
+                def apply() -> None:
+                    self.status_var.set(f"{profile}: {message}")
+
+                self.ctx.runner.post(apply)
+
             outcome = compile_project(
                 self.project,
                 config=self.ctx.config,
                 consent_granted=self.consent_var.get() if hasattr(self, "consent_var") else False,
                 prefer_adapter=self._prefer_adapter,
                 optimization=opt,
+                progress=progress,
             )
             tests_ok: bool | None = None
             if tests:
@@ -2645,7 +2652,7 @@ class OptimizeDialog(_Dialog):
             )
 
         def work():
-            baseline = measure_run("default", None)
+            baseline = measure_run("baseline", None)
             if not baseline.ok:
                 raise RuntimeError("The baseline build failed, so there is nothing to compare.")
             optimized = measure_run(optimization.profile, optimization)
