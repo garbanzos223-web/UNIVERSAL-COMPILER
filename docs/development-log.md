@@ -322,6 +322,41 @@ the original name next to the lowercased one.
 
 ---
 
+## Session: consent for the .exe export, and a repeatable release probe
+
+### The `.exe` export ran project code without asking
+
+The `.ece` build has always required consent before a step that executes
+project-controlled code, but the `.exe` export did not: a CMake configure (the
+project's `CMakeLists.txt`), a Cargo build script (`build.rs`) or an MSBuild
+target ran without asking.
+
+- the native export steps that execute project code now require approval;
+- `compile_exe()` takes `consent_granted`; without it the export stops before
+  running anything and says which step needed it and how to allow it;
+- the CLI gained `exe --consent`, the window passes its existing **Allow
+  project scripts** option;
+- the plan preview marks the same steps, so the preview and the real build
+  agree.
+
+### The release probe was not repeatable
+
+The functional probe of the release check wrote `demo.ece` and a ZIP into its
+own folder. The second run found them already there, and the tool (rightly)
+refused to overwrite - so the second release check failed even though the
+build was fine. The probe now removes its own output and passes `--overwrite`.
+A test runs the probe twice.
+
+### Tests executed
+
+- `python -m unittest discover -s tests -t .` -> **416 tests, OK (skipped=1)**.
+- `python tools/lint_stdlib.py` -> **85 files clean**.
+- `powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1` -> both
+  binaries rebuilt; the release check passed, including the functional probe
+  (build, deep validation, real ZIP package with its manifest).
+
+---
+
 ## Session: 1.2 usability release (40 improvements)
 
 See [docs/RELEASE_NOTES_1.2.md](RELEASE_NOTES_1.2.md) for the user-facing

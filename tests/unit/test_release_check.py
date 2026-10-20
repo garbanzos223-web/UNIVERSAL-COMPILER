@@ -204,6 +204,18 @@ class FunctionalProbeTests(unittest.TestCase):
         self.assertIn("ECE_AUTOCOMPILER_HOME", seen)
         self.assertIn(str(self.tmp), seen["ECE_AUTOCOMPILER_HOME"])
 
+    def test_the_probe_can_run_twice(self) -> None:
+        # The probe writes files of its own: it must clean up after itself so a
+        # second run does not fail on the output of the first one.
+        first, lines = release_check.functional_probe(
+            Path("cli.exe"), work=self.tmp, runner=self._runner()
+        )
+        self.assertTrue(first, msg=str(lines))
+        second, lines = release_check.functional_probe(
+            Path("cli.exe"), work=self.tmp, runner=self._runner()
+        )
+        self.assertTrue(second, msg=str(lines))
+
 
 class ChecklistTests(unittest.TestCase):
     def setUp(self) -> None:

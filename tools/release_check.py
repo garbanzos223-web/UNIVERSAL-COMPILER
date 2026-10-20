@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -200,13 +201,19 @@ def functional_probe(
     (project / "app.py").write_text("print('release probe')\n", encoding="utf-8")
     container = work / "demo.ece"
     packages = work / "packages"
+    # The probe must be repeatable: the files of a previous run are removed
+    # and the commands are allowed to overwrite their own output.
+    if container.exists():
+        container.unlink()
+    if packages.is_dir():
+        shutil.rmtree(packages, ignore_errors=True)
 
     env = os.environ.copy()
     env["ECE_AUTOCOMPILER_HOME"] = str(work / "home")
 
     code, output = _run_cli(
         cli_exe,
-        ["build", str(project), "-o", str(container), "--consent"],
+        ["build", str(project), "-o", str(container), "--consent", "--overwrite"],
         env=env,
         timeout=timeout,
         runner=runner,
@@ -226,7 +233,10 @@ def functional_probe(
 
     code, output = _run_cli(
         cli_exe,
-        ["package", str(project), "--output-dir", str(packages), "--format", "zip"],
+        [
+            "package", str(project), "--output-dir", str(packages),
+            "--format", "zip", "--overwrite",
+        ],
         env=env,
         timeout=timeout,
         runner=runner,
