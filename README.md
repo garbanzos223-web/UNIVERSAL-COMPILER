@@ -89,6 +89,32 @@ is implemented in 1.2. The short version:
   under `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\`; no database, no account, no
   network.
 
+### Beyond the 40: packaging, repair and optimization
+
+Three more subsystems are available on top of the 1.2 usability work. They are
+documented in [docs/ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md):
+
+- **Advanced package generator.** `package` produces real, verified
+  distributables: ZIP and TAR.GZ archives (reproducible: two runs over the
+  same inputs are byte-identical), an application folder, a Windows installer
+  (Inno Setup or NSIS) and the Linux formats (DEB, AppImage) when their
+  tooling is installed. Every package carries a `package-manifest.json` with
+  the metadata, the file list and SHA-256 checksums, and it is **read back and
+  verified** before it is reported as successful. Missing runtime dependencies
+  and copyleft licenses are reported, never hidden.
+- **Automatic error analysis and repair.** `repair` parses the compiler output
+  (GCC/Clang, MSVC, Cargo, Go, Python, javac, TypeScript and linker errors),
+  groups the problems into root causes and applies the deterministic fixes it
+  is sure about: a missing `:`, a missing `#include`, an unused Go import, a
+  missing `using`/`import`. Every change is backed up, rebuilt, verified and
+  **rolled back** when it does not fix the error. The diff is always shown.
+- **Intelligent compilation optimizer.** `optimize` builds the project twice -
+  baseline and optimized - and compares duration, size and (with a benchmark
+  command) runtime. Profiles: `debug`, `release`, `performance`, `size`,
+  `balanced`, `custom`; the default `none` keeps the previous behaviour
+  exactly. Flags are only applied to toolchains that understand them, and
+  conflicting options are reported instead of being applied silently.
+
 ---
 
 ## Features
@@ -188,12 +214,13 @@ A single window with a dark theme, laid out as cards:
   to it.
 * **Log** — colour-coded build output.
 
-Options per mode — `.ece`: compression, skip install. `.exe`: single file or
-folder layout, console window. Shared: allow project scripts (consent),
-overwrite output.
+Options per mode — `.ece`: compression, skip install, optimization profile.
+`.exe`: single file or folder layout, console window. Shared: allow project
+scripts (consent), overwrite output, package only.
 
-Menus: **File** (open output/work folder), **Tools** (Inspect / Extract `.ece`…,
-Toolchains…, Build history…), **Help** (About).
+Menus: **File** (open output/work folder), **Build** (choose project,
+preview plan, optimize and compare), **Tools** (Inspect / Extract `.ece`,
+create distributable package, toolchains, build history), **Help** (About).
 
 ## Command line
 
@@ -201,6 +228,9 @@ Toolchains…, Build history…), **Help** (About).
 python -m ece_autocompiler analyze  path\to\project
 python -m ece_autocompiler build    path\to\project -o out\project.ece --consent
 python -m ece_autocompiler exe      path\to\project -o out\app.exe --name app
+python -m ece_autocompiler package  path\to\project --output-dir out --format zip
+python -m ece_autocompiler optimize path\to\project --profile release
+python -m ece_autocompiler repair   path\to\project --apply
 python -m ece_autocompiler validate out\project.ece --deep
 python -m ece_autocompiler validate out\project.ece --verify-signature
 python -m ece_autocompiler inspect  out\project.ece
@@ -313,6 +343,9 @@ src/ece_autocompiler/
   detection/     markers, toolchain discovery and project detection
   adapters/      build adapter interface + Python/Node + tool-gated adapters
   build/         subprocess runner + orchestrator + history + timing estimates
+  packaging/     advanced package generator (formats, manifest, verification)
+  repair/        compiler diagnostic parsing + automatic repair engine
+  optimize/      optimization profiles, plan changes and measurements
   diagnostics/   build-output classification + environment doctor
   usability/     shared guidance, health, history search, plan, summary, wizard
   security/      filename/path helpers for the UI and CLI
@@ -341,8 +374,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 - [Release notes 1.2](docs/RELEASE_NOTES_1.2.md) — what changed in this release,
   ready to paste into a GitHub release.
 - [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — the original alpha notes.
-- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) — the 40
+- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) – the 40
   usability improvements shipped in release 1.2.
+- [Advanced features](docs/ADVANCED_FEATURES.md) – the package generator, the
+  automatic repair engine and the compilation optimizer.
 
 ## Contributing
 

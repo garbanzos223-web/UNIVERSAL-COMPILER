@@ -47,7 +47,10 @@ try:
         GettingStartedDialog,
         HistoryDialog,
         MainWindow,
+        OptimizeDialog,
+        PackageDialog,
         PlanDialog,
+        RepairDialog,
         ShortcutsDialog,
         SummaryDialog,
         TemplateDialog,
@@ -473,6 +476,9 @@ class GuiSmokeTests(unittest.TestCase):
                 )],
             ),
             HistoryDialog(self.ctx),
+            PackageDialog(self.ctx, self.tmp, output_dir=self.tmp / "out"),
+            OptimizeDialog(self.ctx, self.tmp),
+            RepairDialog(self.ctx, _fake_repair_outcome()),
         ]
         try:
             for dialog in dialogs:
@@ -483,6 +489,25 @@ class GuiSmokeTests(unittest.TestCase):
                     dialog.destroy()
                 except Exception:  # pragma: no cover - already gone
                     pass
+
+
+def _fake_repair_outcome():
+    """A repair outcome with one attempt, used by the dialog smoke test."""
+    from ece_autocompiler.repair.engine import RepairAttempt, RepairOutcome
+
+    outcome = RepairOutcome(message="The build succeeds after 1 repair(s).")
+    outcome.final_ok = True
+    outcome.attempts.append(
+        RepairAttempt(
+            index=1,
+            rule_id="python-missing-colon",
+            file="app.py",
+            title="Add the missing ':' to the block header",
+            diff="--- a/app.py\n+++ b/app.py\n",
+            verification="resolved",
+        )
+    )
+    return outcome
 
 
 if __name__ == "__main__":  # pragma: no cover

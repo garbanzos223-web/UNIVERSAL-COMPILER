@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..adapters.base import Artifact, BuildResult, ProgressCallback
+from ..adapters.base import Artifact, BuildPlan, BuildResult, ProgressCallback
 from ..adapters.registry import AdapterRegistry
 from ..config import AppConfig, Limits
 from ..container import ContainerWriter, Manifest, PayloadItem
@@ -31,6 +31,23 @@ class PackageResult:
     selected_root: str = ""
 
 
+@dataclass
+class CompileResult:
+    """The outcome of detecting, planning and running a build.
+
+    The packaging step is deliberately not part of it, so the same code can be
+    reused by the repair engine and by the advanced package generator.
+    """
+
+    result: BuildResult = field(default_factory=BuildResult)
+    artifacts: list[Artifact] = field(default_factory=list)
+    adapter_id: str = ""
+    project_type: str = ""
+    project_dir: Path | None = None
+    plan: BuildPlan | None = None
+    selected_root: str = ""
+
+
 def _artifact_to_payload(artifacts, root: Path):
     items: list[PayloadItem] = []
     seen = set()
@@ -51,47 +68,33 @@ class BuildOrchestrator:
         self.limits = limits or Limits()
         self.registry = AdapterRegistry()
 
-    def build_and_package(
+    # ------------------------------------------------------------------
+    def compile_project(
         self,
         project_path: Path | str,
-        output_path: Path | str,
         *,
         config_overrides: dict | None = None,
         consent_granted: bool = False,
-        overwrite: bool = False,
-        compression: str = "zlib",
         prefer_adapter: str | None = None,
         package_only: bool = False,
         selected_adapter: list[str] | None = None,
         progress: ProgressCallback | None = None,
         cancel: CancelToken | None = None,
-    ) -> tuple[BuildResult, PackageResult]:
-        """Detect, build (unless *package_only*) and package into an .ece file.
+        optimization=None,
+        log_path: Path | None = None,
+    ) -> CompileResult:
+        """Detect, plan and run the build; return the result and the artifacts.
 
         *prefer_adapter* forces a specific adapter (monorepo choice).
-        *package_only* skips the build and packages what is already on disk.
-        *selected_adapter*, when given, receives the chosen adapter id so the
-        caller can record which one was used without re-running detection.
+        *package_only* skips the build and collects what is already on disk.
+        *selected_adapter*, when given, receives the chosen adapter id.
+        *optimization*, when given, is an
+        :class:`ece_autocompiler.optimize.plan.OptimizationPlan` whose flags
+        are applied to the build plan.
         """
         root = Path(project_path).resolve()
         if not root.exists():
             raise ConfigurationError("Project path does not exist", detail=str(root))
-        out = Path(output_path)
-        self.config.ensure_directories()
-        started_at = time.monotonic()
-
-        def _finish(result: BuildResult) -> BuildResult:
-            """Stamp the real wall time of detect + build + package (item 8).
-
-            The adapter measures its own compile step; packaging and scanning
-            also take time, so the caller-facing duration is never less than
-            the whole operation. Package-only runs therefore stop reporting
-            a misleading 0.0 seconds.
-            """
-            result.duration_seconds = max(
-                result.duration_seconds, round(time.monotonic() - started_at, 3)
-            )
-            return result
 
         if cancel is not None and cancel.is_set():
             raise BuildError("Cancelled")
@@ -120,6 +123,10 @@ class BuildOrchestrator:
         if progress:
             progress("Creating build plan", 20, 100)
         plan = adapter.create_build_plan(project_dir, config_overrides)
+        if optimization is not None:
+            from ..optimize.plan import apply_optimization
+
+            apply_optimization(plan, optimization)
         if plan.requires_consent and not consent_granted and not package_only:
             raise ConfigurationError(
                 "This build requires explicit consent (runs project scripts).",
@@ -133,9 +140,10 @@ class BuildOrchestrator:
         else:
             if progress:
                 progress("Running build", 30, 100)
-            log_dir = self.config.work_dir / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / f"build_{int(time.time())}.log"
+            if log_path is None:
+                log_dir = self.config.work_dir / "logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path = log_dir / f"build_{int(time.time())}.log"
             res = adapter.execute_build(
                 plan,
                 progress=(
@@ -150,7 +158,15 @@ class BuildOrchestrator:
                 consent_granted=consent_granted,
             )
             if not res.ok:
-                return _finish(res), PackageResult(ok=False, container_path=None, message="Build failed")
+                return CompileResult(
+                    result=res,
+                    artifacts=[],
+                    adapter_id=adapter.adapter_id,
+                    project_type=best.project_type,
+                    project_dir=project_dir,
+                    plan=plan,
+                    selected_root=best.root,
+                )
 
         if progress:
             progress("Collecting artifacts", 75, 100)
@@ -170,12 +186,79 @@ class BuildOrchestrator:
                     continue
                 artifacts.append(Artifact(path=path, kind="source", size=path.stat().st_size, rel_path=rel))
 
+        return CompileResult(
+            result=res,
+            artifacts=artifacts,
+            adapter_id=adapter.adapter_id,
+            project_type=best.project_type,
+            project_dir=project_dir,
+            plan=plan,
+            selected_root=best.root,
+        )
+
+    # ------------------------------------------------------------------
+    def build_and_package(
+        self,
+        project_path: Path | str,
+        output_path: Path | str,
+        *,
+        config_overrides: dict | None = None,
+        consent_granted: bool = False,
+        overwrite: bool = False,
+        compression: str = "zlib",
+        prefer_adapter: str | None = None,
+        package_only: bool = False,
+        selected_adapter: list[str] | None = None,
+        progress: ProgressCallback | None = None,
+        cancel: CancelToken | None = None,
+        optimization=None,
+    ) -> tuple[BuildResult, PackageResult]:
+        """Detect, build (unless *package_only*) and package into an .ece file."""
+        root = Path(project_path).resolve()
+        if not root.exists():
+            raise ConfigurationError("Project path does not exist", detail=str(root))
+        out = Path(output_path)
+        self.config.ensure_directories()
+        started_at = time.monotonic()
+
+        def _finish(result: BuildResult) -> BuildResult:
+            """Stamp the real wall time of detect + build + package (item 8).
+
+            The adapter measures its own compile step; packaging and scanning
+            also take time, so the caller-facing duration is never less than
+            the whole operation. Package-only runs therefore stop reporting
+            a misleading 0.0 seconds.
+            """
+            result.duration_seconds = max(
+                result.duration_seconds, round(time.monotonic() - started_at, 3)
+            )
+            return result
+
+        compiled = self.compile_project(
+            root,
+            config_overrides=config_overrides,
+            consent_granted=consent_granted,
+            prefer_adapter=prefer_adapter,
+            package_only=package_only,
+            selected_adapter=selected_adapter,
+            progress=progress,
+            cancel=cancel,
+            optimization=optimization,
+        )
+        res = compiled.result
+        adapter_id = compiled.adapter_id
+        project_dir = compiled.project_dir or root
+        if not res.ok:
+            return _finish(res), PackageResult(ok=False, container_path=None, message="Build failed")
+
+        artifacts = compiled.artifacts
+
         if progress:
             progress("Packaging into .ece", 85, 100)
         manifest = Manifest(
             project_name=root.name,
-            adapter_id=adapter.adapter_id,
-            payload_type=best.project_type,
+            adapter_id=adapter_id,
+            payload_type=compiled.project_type,
             platform="windows",
             architecture="x64",
             configuration="release",
@@ -203,7 +286,7 @@ class BuildOrchestrator:
                 sha256=digest,
                 file_count=len(items),
                 size=size,
-                selected_root=best.root,
+                selected_root=compiled.selected_root,
             )
         except Exception as e:
             return _finish(res), PackageResult(ok=False, container_path=None, message=str(e))

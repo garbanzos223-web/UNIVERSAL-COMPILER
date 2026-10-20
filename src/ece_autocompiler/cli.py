@@ -6,6 +6,9 @@ Subcommands mirror the GUI workflow so the tool is usable head-less and in CI:
     plan      show the exact build plan without running anything
     build     run a real build and package the result into an .ece container
     exe       bundle a project into a standalone .exe
+    package   create a distributable package (ZIP, TAR.GZ, installer, ...)
+    optimize  compare a baseline build with an optimized build
+    repair    analyse a build failure and repair what is safe to repair
     validate  validate an existing container (optionally deep hash check)
     inspect   print a container's manifest and file index
     extract   safely extract a container
@@ -111,6 +114,28 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--quiet", action="store_true", help="Suppress progress, keep the final summary.")
     p_build.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
     p_build.add_argument("--json", action="store_true", help="Emit a JSON summary.")
+    p_build.add_argument(
+        "--profile",
+        default="none",
+        help="Optimization profile for this build (default: none, the project builds as it asks).",
+    )
+    p_build.add_argument(
+        "--custom-flags",
+        action="append",
+        default=[],
+        help="Extra compiler options for the 'custom' profile (repeatable).",
+    )
+    p_build.add_argument(
+        "--repair",
+        action="store_true",
+        help="When the build fails, analyse it and repair what is safe to repair.",
+    )
+    p_build.add_argument(
+        "--repair-attempts",
+        type=int,
+        default=3,
+        help="Maximum number of automatic repair attempts (default: 3).",
+    )
 
     p_validate = sub.add_parser("validate", help="Validate an .ece container.")
     p_validate.add_argument("file", help="Container file.")
@@ -188,6 +213,106 @@ def build_parser() -> argparse.ArgumentParser:
     p_exe.add_argument("--quiet", action="store_true", help="Suppress progress.")
     p_exe.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
     p_exe.add_argument("--json", action="store_true", help="Emit a JSON summary.")
+
+    p_package = sub.add_parser(
+        "package", help="Create a distributable package from a project."
+    )
+    p_package.add_argument("path", help="Project directory.")
+    p_package.add_argument(
+        "--format",
+        dest="fmt",
+        default="zip",
+        help="Package format: zip, tar.gz, folder, inno, nsis, deb, appimage.",
+    )
+    p_package.add_argument("--output-dir", help="Where the package is written.")
+    p_package.add_argument("--name", help="Application name (default: project folder name).")
+    p_package.add_argument("--version", default="1.0.0", help="Application version.")
+    p_package.add_argument("--description", default="", help="One-line description.")
+    p_package.add_argument("--publisher", default="", help="Publisher or vendor name.")
+    p_package.add_argument(
+        "--arch", default="x64", choices=("x64", "x86", "arm64"), help="Target architecture."
+    )
+    p_package.add_argument("--icon", help="Icon file to include in the package.")
+    p_package.add_argument("--license", dest="license_file", help="License file to include.")
+    p_package.add_argument("--readme", help="README file to include.")
+    p_package.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        help="Keep only the files that match this pattern (repeatable).",
+    )
+    p_package.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Leave out the files that match this pattern (repeatable).",
+    )
+    p_package.add_argument(
+        "--build", action="store_true", help="Run the build before packaging the result."
+    )
+    p_package.add_argument("--consent", action="store_true", help="Allow steps that run project scripts.")
+    p_package.add_argument("--adapter", help="Force a specific adapter (for monorepos).")
+    p_package.add_argument("--overwrite", action="store_true", help="Overwrite an existing package.")
+    p_package.add_argument(
+        "--no-reproducible",
+        action="store_true",
+        help="Write the real creation time instead of a pinned one (archives stop being "
+             "byte-identical between runs).",
+    )
+    p_package.add_argument(
+        "--allow-copyleft",
+        action="store_true",
+        help="Confirm that a copyleft license may be redistributed.",
+    )
+    p_package.add_argument("--quiet", action="store_true", help="Suppress progress lines.")
+    p_package.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
+    p_package.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    p_optimize = sub.add_parser(
+        "optimize", help="Compare a baseline build with an optimized build."
+    )
+    p_optimize.add_argument("path", help="Project directory.")
+    p_optimize.add_argument(
+        "--profile",
+        default="release",
+        help="Optimization profile: debug, release, performance, size, balanced, custom.",
+    )
+    p_optimize.add_argument(
+        "--custom-flags",
+        action="append",
+        default=[],
+        help="Compiler options for the 'custom' profile (repeatable).",
+    )
+    p_optimize.add_argument("--adapter", help="Force a specific adapter (for monorepos).")
+    p_optimize.add_argument("--consent", action="store_true", help="Allow steps that run project scripts.")
+    p_optimize.add_argument("--benchmark", help="Command that runs the project benchmark.")
+    p_optimize.add_argument("--tests", help="Command that runs the project tests.")
+    p_optimize.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
+    p_optimize.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    p_repair = sub.add_parser(
+        "repair", help="Analyse a build failure and repair what is safe to repair."
+    )
+    p_repair.add_argument("path", help="Project directory.")
+    p_repair.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the proposed fixes. Without this flag nothing is changed.",
+    )
+    p_repair.add_argument(
+        "--max-attempts",
+        type=int,
+        default=3,
+        help="Maximum number of repair attempts (default: 3).",
+    )
+    p_repair.add_argument(
+        "--timeout", type=int, default=300, help="Time limit for the whole repair run, in seconds."
+    )
+    p_repair.add_argument("--tests", help="Command that runs the project tests.")
+    p_repair.add_argument("--adapter", help="Force a specific adapter (for monorepos).")
+    p_repair.add_argument("--consent", action="store_true", help="Allow steps that run project scripts.")
+    p_repair.add_argument("--no-progress", action="store_true", help="Suppress progress lines only.")
+    p_repair.add_argument("--json", action="store_true", help="Emit JSON.")
 
     sub.add_parser("gui", help="Launch the desktop interface.")
     return parser
@@ -395,11 +520,13 @@ def cmd_build(args) -> int:
     # Package-only runs are timed separately so they never skew real builds.
     timing_mode = "package" if args.package_only else "ece"
     estimate = None
+    adapter_guess = args.adapter or ""
     try:
         detected = scan(root)
-        guess = args.adapter or (detected.best.adapter_id if detected.best else "")
-        if guess:
-            estimate = estimate_build(cfg.work_dir, guess, timing_mode)
+        if not adapter_guess and detected.best is not None:
+            adapter_guess = detected.best.adapter_id
+        if adapter_guess:
+            estimate = estimate_build(cfg.work_dir, adapter_guess, timing_mode)
             if not (_quiet(args) or _wants_json(args)):
                 _print(estimate.message)
     except EceError:
@@ -408,6 +535,27 @@ def cmd_build(args) -> int:
     overrides: dict = {}
     if args.skip_install:
         overrides["skip_npm_install"] = True
+
+    # Optimization profile: "none" keeps the previous behaviour exactly.
+    optimization = None
+    if getattr(args, "profile", "none") and getattr(args, "profile", "none") != "none":
+        from .optimize.plan import OptimizationRequest, build_optimization_plan
+
+        optimization = build_optimization_plan(
+            adapter_guess,
+            OptimizationRequest.from_args(
+                args.profile, getattr(args, "custom_flags", []) or []
+            ),
+        )
+        if not (_quiet(args) or _wants_json(args)):
+            for line in optimization.text().splitlines():
+                _print(line)
+        if optimization.unsupported_reason:
+            _print("")
+            _print("What happened: this project cannot be optimized with that profile.")
+            _print(f"Why: {optimization.unsupported_reason}")
+            _print("What to do: pick another profile, or build without --profile.")
+            return EXIT_ERROR
 
     if args.no_input and not args.consent:
         # Non-interactive: a consent-requiring build must be asked for up front.
@@ -422,8 +570,9 @@ def cmd_build(args) -> int:
     orchestrator = BuildOrchestrator(config=cfg)
     selected: list[str] = []
     started = _now_iso()
-    try:
-        result, package = orchestrator.build_and_package(
+
+    def run_build():
+        return orchestrator.build_and_package(
             root,
             output,
             config_overrides=overrides,
@@ -434,7 +583,11 @@ def cmd_build(args) -> int:
             package_only=args.package_only,
             selected_adapter=selected,
             progress=_progress_printer(args),
+            optimization=optimization,
         )
+
+    try:
+        result, package = run_build()
     except EceError as exc:
         report = diagnose_failure(str(exc), what=str(exc.message))
         for line in report.lines():
@@ -451,6 +604,43 @@ def cmd_build(args) -> int:
 
     adapter_id = selected[0] if selected else ""
     label = ADAPTER_LABELS.get(adapter_id, adapter_id)
+
+    if not result.ok and getattr(args, "repair", False):
+        # Automatic repair: analyse the failure, apply what is safe, rebuild.
+        from .build.compile_service import make_build_runner
+        from .repair import RepairEngine
+
+        _print("")
+        _print("The build failed. Analysing the error...")
+        engine = RepairEngine(config=cfg)
+        runner = make_build_runner(
+            root,
+            config=cfg,
+            config_overrides=overrides,
+            consent_granted=args.consent,
+            prefer_adapter=args.adapter,
+            optimization=optimization,
+        )
+        outcome = engine.repair(
+            root,
+            runner,
+            max_attempts=getattr(args, "repair_attempts", 3),
+            timeout=300.0,
+            apply=True,
+            progress=_message_printer(args),
+        )
+        for line in outcome.text().splitlines():
+            _print(redact(line))
+        if outcome.final_ok:
+            _print("")
+            _print("The repair worked. Building the package again...")
+            try:
+                result, package = run_build()
+            except EceError as exc:
+                report = diagnose_failure(str(exc), what=str(exc.message))
+                for line in report.lines():
+                    _print(redact(line))
+                return EXIT_ERROR
 
     if not result.ok:
         combined = "\n".join(result.errors) or "the build tool failed"
@@ -534,6 +724,265 @@ def cmd_build(args) -> int:
     else:
         _print(summary.text())
     return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# package / optimize / repair
+# ---------------------------------------------------------------------------
+
+
+def _message_printer(args):
+    """A printer for operations that report a message, not a progress ratio."""
+    if _quiet(args) or _wants_json(args):
+        return None
+
+    def show(message: str) -> None:
+        _print(f"  {message}")
+
+    return show
+
+
+def _split_command(text: str) -> list[str]:
+    """Split a command line into an argv list, keeping quoted paths together."""
+    import shlex
+
+    parts = shlex.split(text, posix=False)
+    cleaned: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'":
+            cleaned.append(part[1:-1])
+        else:
+            cleaned.append(part)
+    return cleaned
+
+
+def cmd_package(args) -> int:
+    from .packaging import AdvancedPackager, PackageMetadata, PackageRequest
+
+    root = Path(args.path)
+    if not root.exists():
+        _print(f"error: path does not exist: {root}")
+        return EXIT_ERROR
+
+    cfg = AppConfig()
+    cfg.ensure_directories()
+    output_dir = Path(args.output_dir) if args.output_dir else cfg.output_dir
+
+    metadata = PackageMetadata(
+        name=args.name or root.name,
+        version=args.version,
+        description=args.description,
+        publisher=args.publisher,
+        architecture=args.arch,
+    )
+    request = PackageRequest(
+        project=root,
+        output_dir=output_dir,
+        fmt=args.fmt,
+        metadata=metadata,
+        include=list(args.include or []),
+        exclude=list(args.exclude or []),
+        run_build=bool(args.build),
+        consent=bool(args.consent),
+        prefer_adapter=args.adapter,
+        reproducible=not args.no_reproducible,
+        allow_copyleft=bool(args.allow_copyleft),
+        icon=Path(args.icon) if args.icon else None,
+        license_file=Path(args.license_file) if args.license_file else None,
+        readme=Path(args.readme) if args.readme else None,
+        overwrite=bool(args.overwrite),
+    )
+
+    packager = AdvancedPackager(config=cfg)
+    result = packager.package(request, progress=_progress_printer(args))
+
+    from .build.history import append as history_append, make_record
+
+    history_append(
+        make_record(
+            root,
+            ok=result.ok,
+            exit_code=0 if result.ok else EXIT_ERROR,
+            duration_seconds=0.0,
+            adapter_id=result.adapter_id,
+            mode="package",
+            container_path=result.path,
+            artifact_count=len(result.files),
+            sha256=result.sha256,
+            message=result.message or "Package created",
+        ),
+        base=cfg.work_dir,
+    )
+
+    if _wants_json(args):
+        _print_json(result.as_dict())
+        return EXIT_OK if result.ok else EXIT_ERROR
+
+    _print(result.text())
+    if result.ok:
+        _print("")
+        _print(f"Package: {result.path}")
+        _print("The package was verified: every file matches its checksum in the manifest.")
+    return EXIT_OK if result.ok else EXIT_ERROR
+
+
+def cmd_optimize(args) -> int:
+    from .build.compile_service import compile_project
+    from .optimize.measure import Measurement, compare, record_optimization
+    from .optimize.plan import OptimizationRequest, build_optimization_plan
+    from .optimize.recommend import recommendations
+    from .packaging.manifest import detected_toolchains
+
+    root = Path(args.path)
+    if not root.exists():
+        _print(f"error: path does not exist: {root}")
+        return EXIT_ERROR
+
+    cfg = AppConfig()
+    cfg.ensure_directories()
+
+    adapter_guess = args.adapter or ""
+    try:
+        detected = scan(root)
+        if not adapter_guess and detected.best is not None:
+            adapter_guess = detected.best.adapter_id
+    except EceError:
+        detected = None
+
+    optimization = build_optimization_plan(
+        adapter_guess,
+        OptimizationRequest.from_args(args.profile, args.custom_flags),
+    )
+    if optimization.unsupported_reason:
+        _print("What happened: this project cannot be optimized with that profile.")
+        _print(f"Why: {optimization.unsupported_reason}")
+        _print("What to do: pick another profile, or build without --profile.")
+        return EXIT_ERROR
+    if not (_quiet(args) or _wants_json(args)):
+        for line in optimization.text().splitlines():
+            _print(line)
+        _print("")
+
+    tests_command = _split_command(args.tests) if args.tests else None
+    benchmark_command = _split_command(args.benchmark) if args.benchmark else None
+
+    def measure_run(profile: str, opt) -> Measurement:
+        outcome = compile_project(
+            root,
+            config=cfg,
+            consent_granted=args.consent,
+            prefer_adapter=args.adapter,
+            optimization=opt,
+            progress=_progress_printer(args),
+        )
+        tests_ok: bool | None = None
+        if tests_command:
+            from .build.process import run_single
+
+            tests_ok = run_single(tests_command, root, timeout=900).ok
+        benchmark: dict[str, float] = {}
+        if benchmark_command:
+            from .build.process import run_single
+
+            result = run_single(benchmark_command, root, timeout=1800)
+            benchmark = {"seconds": result.duration_seconds}
+        return Measurement(
+            profile=profile,
+            ok=outcome.ok,
+            compile_seconds=outcome.duration_seconds,
+            total_size=outcome.total_size,
+            file_count=outcome.file_count,
+            tests_ok=tests_ok,
+            benchmark=benchmark,
+            toolchains=detected_toolchains(),
+            artifacts=[str(a.path) for a in outcome.artifacts[:20]],
+        )
+
+    if not (_quiet(args) or _wants_json(args)):
+        _print("Building the baseline (no optimization)...")
+    baseline = measure_run("default", None)
+    if not baseline.ok:
+        _print("What happened: the baseline build failed, so there is nothing to compare.")
+        _print("Why: the project does not build in its current state.")
+        _print("What to do: fix the build first (run 'ece-autocompiler repair' for help).")
+        return EXIT_ERROR
+
+    if not (_quiet(args) or _wants_json(args)):
+        _print(f"Building with the '{optimization.profile}' profile...")
+    optimized = measure_run(optimization.profile, optimization)
+
+    report = compare(baseline, optimized)
+    advice = recommendations(adapter_guess, optimization, report)
+    record_optimization(cfg.work_dir, report)
+
+    if _wants_json(args):
+        payload = report.as_dict()
+        payload["optimization"] = optimization.as_dict()
+        payload["recommendations"] = [r.to_dict() for r in advice]
+        _print_json(payload)
+        return EXIT_OK if optimized.ok else EXIT_ERROR
+
+    _print(report.text())
+    if advice:
+        _print("")
+        _print("Recommendations:")
+        for item in advice:
+            state = "applied" if item.applied else (
+                "needs your approval" if item.requires_approval else "information"
+            )
+            _print(f"  [{state}] {item.text}")
+    if not optimized.ok:
+        _print("")
+        _print("What happened: the optimized build failed.")
+        _print("What to do: check the log above; the project was left as it was.")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def cmd_repair(args) -> int:
+    from .build.compile_service import make_build_runner
+    from .repair import RepairEngine
+
+    root = Path(args.path)
+    if not root.exists():
+        _print(f"error: path does not exist: {root}")
+        return EXIT_ERROR
+
+    cfg = AppConfig()
+    cfg.ensure_directories()
+    tests_command = _split_command(args.tests) if args.tests else None
+
+    runner = make_build_runner(
+        root,
+        config=cfg,
+        consent_granted=args.consent,
+        prefer_adapter=args.adapter,
+    )
+    engine = RepairEngine(config=cfg)
+    outcome = engine.repair(
+        root,
+        runner,
+        max_attempts=max(1, int(args.max_attempts)),
+        timeout=float(max(1, int(args.timeout))),
+        apply=bool(args.apply),
+        tests_command=tests_command,
+        progress=_message_printer(args),
+    )
+
+    if _wants_json(args):
+        _print_json(outcome.as_dict())
+        return EXIT_OK if outcome.final_ok else EXIT_ERROR
+
+    _print(outcome.text())
+    if outcome.analysis is not None:
+        _print("")
+        _print("Analysis:")
+        for line in outcome.analysis.text().splitlines():
+            _print(f"  {line}")
+    if not args.apply and outcome.proposals:
+        _print("")
+        _print("Nothing was changed. Re-run with --apply to apply the safe repairs.")
+    return EXIT_OK if outcome.final_ok else EXIT_ERROR
 
 
 def cmd_exe(args) -> int:
@@ -957,6 +1406,9 @@ def main(argv: list[str] | None = None) -> int:
         "plan": cmd_plan,
         "build": cmd_build,
         "exe": cmd_exe,
+        "package": cmd_package,
+        "optimize": cmd_optimize,
+        "repair": cmd_repair,
         "validate": cmd_validate,
         "inspect": cmd_inspect,
         "extract": cmd_extract,

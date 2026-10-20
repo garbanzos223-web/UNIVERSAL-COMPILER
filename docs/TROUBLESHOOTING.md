@@ -19,6 +19,10 @@ Knowing these paths makes most problems obvious:
 | Build logs | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\logs\*.log` |
 | Build history | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\history.jsonl` |
 | Timing history used for estimates | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\timings.jsonl` |
+| Optimization comparisons | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\optimizations.jsonl` |
+| Repair journal (every attempt) | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\repair-journal.jsonl` |
+| Backup of the files a repair touched | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\repair-backups\<run>\` |
+| Staging area used while packaging | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\package-staging\` |
 | Settings and first-run state | `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\config\` |
 | Crash log (desktop build only) | `%TEMP%\ece-autocompiler-crash.log` |
 
@@ -283,6 +287,94 @@ python -m ece_autocompiler --version
 
 `0` success Â· `1` the operation failed (the message says why) Â· `2` the command
 line itself was wrong. Scripts can rely on these.
+
+---
+
+## Distributable packages
+
+### "The Windows installer (Inno Setup) format is not available on this PC"
+
+The installer formats need their compiler on the machine. The message names it
+and prints the install command:
+
+```powershell
+winget install JRSoftware.InnoSetup   # Inno Setup  -> format "inno"
+winget install NSIS.NSIS              # NSIS        -> format "nsis"
+```
+
+`zip`, `tar.gz` and `folder` need nothing and always work.
+
+### "This format needs dpkg-deb, which ships with Debian/Ubuntu"
+
+`deb` and `appimage` can only be produced on Linux. On Windows the generator
+still writes the layout it would use (`<name>-<version>.deb-root` and
+`<name>-<version>-AppDir` under the work folder) so the package can be built
+on a Linux machine.
+
+### "The package was created but did not pass verification"
+
+The file was written but reading it back did not match the manifest. Nothing
+is reported as successful in that case. Delete the output file and run the
+command again; if it repeats, the output folder is probably being modified by
+another program (antivirus, sync client).
+
+### "The ZIP archive already exists in ..."
+
+The generator never overwrites a package by accident. Pass `--overwrite` to
+replace it.
+
+### "No license file was found in the project"
+
+This is a warning, not an error: confirm that redistribution is allowed before
+shipping the package. A copyleft license (GPL/LGPL/AGPL/MPL) additionally
+asks for `--allow-copyleft`.
+
+---
+
+## Automatic repair
+
+### "No automatic repair is safe for this error"
+
+The failure needs a decision (wrong types, a missing library, a design
+problem). The analysis below the message says what to fix; the tool does not
+guess.
+
+### "The change did not fix the error, so it was reverted"
+
+The repair was applied, the project was rebuilt, the same error was still
+there, so the original file was restored from
+`%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\repair-backups\`. Nothing was
+lost.
+
+### The repair changed a file I did not expect
+
+Every attempt is recorded in
+`%LOCALAPPDATA%\ECE-Universal-AutoCompiler\work\repair-journal.jsonl` with the
+original error, the diff, the files modified and the verification result. The
+backup folder holds the original file, so it can be restored by hand.
+
+---
+
+## Optimization
+
+### "This project cannot be optimized with that profile"
+
+Interpreter projects (Python, Node.js, PHP) and build systems without
+compiler flags (Maven, Gradle) have nothing to optimize. Use `none` (the
+default) or bundle the project into a native executable first.
+
+### "Runtime: not measured (no benchmark command was run)"
+
+No runtime claim can be made without a benchmark. Pass one:
+
+```powershell
+python -m ece_autocompiler optimize path\to\project --profile release --benchmark "python bench.py"
+```
+
+### "The optimized build is slower to compile"
+
+That is the usual price of link-time optimization and of the `performance`
+profile. The report shows the measured percentage; nothing is estimated.
 
 ---
 

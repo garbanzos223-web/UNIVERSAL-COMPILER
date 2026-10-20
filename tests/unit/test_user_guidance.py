@@ -33,6 +33,7 @@ from ece_autocompiler.build.exe_exporter import (  # noqa: E402
     export_exe,
 )
 from ece_autocompiler.build.process import RunResult  # noqa: E402
+from ece_autocompiler.config import AppConfig  # noqa: E402
 
 
 class _FailureContractMixin:
@@ -158,6 +159,14 @@ class CliFailurePresentationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        # The CLI writes its history and timing samples in the work folder;
+        # point it at the test folder so a test run never touches the real
+        # application data.
+        config = AppConfig(output_dir=self.tmp / "out", work_dir=self.tmp / "work")
+        config.ensure_directories()
+        patcher = mock.patch.object(cli, "AppConfig", return_value=config)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _run_cli(self, *argv: str):
         out, err = io.StringIO(), io.StringIO()

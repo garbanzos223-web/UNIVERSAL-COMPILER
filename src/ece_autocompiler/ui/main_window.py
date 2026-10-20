@@ -289,11 +289,30 @@ class MainWindow(ttk.Frame):
         pkg_only = ttk.Checkbutton(
             opts, text="Package only (skip the build)", variable=self.package_only_var,
         )
-        pkg_only.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        pkg_only.grid(row=2, column=0, sticky="w", pady=(6, 0))
         add_tooltip(
             pkg_only,
             "Skip running the build and package what is already on disk. Useful when the "
             "project is already built and you only need an .ece container.",
+        )
+
+        # Optimization profile: "none" keeps the previous behaviour exactly.
+        from ..optimize.profiles import profile_keys
+
+        self.profile_var = tk.StringVar(value="none")
+        ttk.Label(opts, text="Profile", style="Muted.TLabel").grid(
+            row=2, column=1, sticky="w", padx=(16, 4), pady=(6, 0)
+        )
+        self.profile_box = ttk.Combobox(
+            opts, textvariable=self.profile_var, values=profile_keys(), state="readonly", width=14,
+        )
+        self.profile_box.grid(row=2, column=2, sticky="w", pady=(6, 0))
+        add_tooltip(
+            self.profile_box,
+            "Optimization profile for the build.\n"
+            "none: the project builds exactly as it asks.\n"
+            "release / balanced / performance / size: compiler options are added.\n"
+            "debug: fast build with debug information.",
         )
 
         actions = ttk.Frame(out)
@@ -461,10 +480,13 @@ class MainWindow(ttk.Frame):
         buildm.add_command(label="Preview plan", accelerator="Ctrl+P", command=self._preview_plan)
         buildm.add_command(label="Compile", accelerator="Ctrl+Return", command=self._build)
         buildm.add_command(label="Cancel build", accelerator="Esc", command=self._cancel_build)
+        buildm.add_separator()
+        buildm.add_command(label="Optimize and compare...", command=self._show_optimize)
         menubar.add_cascade(label="Build", menu=buildm)
 
         toolsm = tk.Menu(menubar, tearoff=0)
         toolsm.add_command(label="Inspect / Extract / Compare .ece...", command=self._show_container)
+        toolsm.add_command(label="Create distributable package...", command=self._show_package)
         toolsm.add_command(label="Toolchains...", command=self._show_toolchains)
         toolsm.add_command(label="Build history...", accelerator="Ctrl+H", command=self._show_history)
         toolsm.add_separator()
@@ -771,6 +793,10 @@ class MainWindow(ttk.Frame):
             prefer = self._candidates[0].adapter_id
         overrides = {"skip_npm_install": True} if self.skip_install_var.get() else {}
         orchestrator = BuildOrchestrator(config=self.ctx.config)
+        optimization = self._optimization()
+        if optimization is not None:
+            for line in optimization.text().splitlines():
+                self.log.append(f"  {line}", "muted")
 
         def work():
             return orchestrator.build_and_package(
@@ -785,9 +811,31 @@ class MainWindow(ttk.Frame):
                 selected_adapter=self._last_adapter_holder,
                 progress=progress,
                 cancel=self._cancel,
+                optimization=optimization,
             )
 
         self.ctx.runner.run(work, self._build_done, lambda e: self._fail("Build failed", e))
+
+    def _optimization(self):
+        """The optimization plan for the selected profile, or None."""
+        from ..optimize.plan import OptimizationRequest, build_optimization_plan
+
+        key = self.profile_var.get().strip().lower()
+        if not key or key == "none":
+            return None
+        prefer = self._preferred_adapter or None
+        if prefer is None and len(self._candidates) == 1:
+            prefer = self._candidates[0].adapter_id
+        plan = build_optimization_plan(prefer or "", OptimizationRequest.from_args(key, []))
+        if plan.unsupported_reason:
+            messagebox.showwarning(
+                APP_NAME,
+                f"This project cannot be optimized with the '{key}' profile.\n\n"
+                f"{plan.unsupported_reason}\n\n"
+                "Choose 'none' or another profile.",
+            )
+            return None
+        return plan
 
     def _build_exe(self, project: Path, output: Path, progress) -> None:
         from ..build.exe_exporter import compile_exe
@@ -929,7 +977,7 @@ class MainWindow(ttk.Frame):
             self.ctx.status.set("Build failed.")
             self._record(False, build_result, None)
             self._show_error_dialog("Build failed", "\n".join(report.lines()), log_path=build_result.log_path,
-                                    retry=self._build)
+                                    retry=self._build, repair=self._attempt_repair)
             return
 
         if not package.ok:
@@ -1082,9 +1130,46 @@ class MainWindow(ttk.Frame):
             return ""
 
     def _show_error_dialog(self, title: str, text: str, *, log_path: Path | str | None = None,
-                           retry=None) -> None:
+                           retry=None, repair=None) -> None:
         """Show a failure with the three-part shape and a Copy button (items 3/10/32)."""
-        ErrorDialog(self.ctx, title, text, log_path=log_path, retry=retry)
+        ErrorDialog(self.ctx, title, text, log_path=log_path, retry=retry, repair=repair)
+
+    def _attempt_repair(self) -> None:
+        """Analyse the last build failure and repair what is safe to repair."""
+        project = self.project_row.var.get().strip()
+        if not project or not Path(project).exists():
+            messagebox.showwarning(APP_NAME, "Choose an existing project folder first.")
+            return
+
+        from ..build.compile_service import make_build_runner
+        from ..repair import RepairEngine
+
+        runner = make_build_runner(
+            Path(project),
+            config=self.ctx.config,
+            consent_granted=self.consent_var.get(),
+            prefer_adapter=self._preferred_adapter or None,
+        )
+        engine = RepairEngine(config=self.ctx.config)
+        self.ctx.status.set("Analysing the build failure...")
+
+        def work():
+            return engine.repair(Path(project), runner, apply=True)
+
+        def done(outcome) -> None:
+            self.ctx.status.set("The repair run finished.")
+            self.log.append(outcome.message, "ok" if outcome.final_ok else "warn")
+            for attempt in outcome.attempts:
+                self.log.append(
+                    f"  {attempt.title} -> {attempt.verification}", "muted"
+                )
+            RepairDialog(self.ctx, outcome, on_retry=self._build)
+
+        def fail(exc: BaseException) -> None:
+            self.ctx.status.set("The repair run failed.")
+            messagebox.showerror(APP_NAME, f"The repair could not run:\n{exc}")
+
+        self.ctx.runner.run(work, done, fail)
 
     def _preview_plan(self) -> None:
         project = self.project_row.var.get().strip()
@@ -1159,6 +1244,31 @@ class MainWindow(ttk.Frame):
 
     def _show_template(self) -> None:
         TemplateDialog(self.ctx, on_created=self._on_template_created)
+
+    def _show_package(self) -> None:
+        """Open the distributable package dialog for the current project."""
+        project = self.project_row.var.get().strip()
+        if not project or not Path(project).exists():
+            messagebox.showwarning(APP_NAME, "Choose an existing project folder first.")
+            return
+        PackageDialog(
+            self.ctx,
+            Path(project),
+            output_dir=self.ctx.config.output_dir,
+            prefer_adapter=self._preferred_adapter or None,
+        )
+
+    def _show_optimize(self) -> None:
+        """Open the optimization comparison dialog for the current project."""
+        project = self.project_row.var.get().strip()
+        if not project or not Path(project).exists():
+            messagebox.showwarning(APP_NAME, "Choose an existing project folder first.")
+            return
+        OptimizeDialog(
+            self.ctx,
+            Path(project),
+            prefer_adapter=self._preferred_adapter or None,
+        )
 
     def _on_template_created(self, path: Path) -> None:
         self.project_row.var.set(str(path))
@@ -1670,7 +1780,7 @@ class ErrorDialog(_Dialog):
     """
 
     def __init__(self, ctx: AppContext, title: str, text: str, *, log_path=None,
-                 retry=None) -> None:
+                 retry=None, repair=None) -> None:
         super().__init__(ctx, title, width=760, height=420)
         self._text = redact(text)
         body = ttk.Frame(self, padding=12)
@@ -1684,6 +1794,11 @@ class ErrorDialog(_Dialog):
             ttk.Button(row, text="Try again", style="Accent.TButton", command=lambda: (self.destroy(), retry())).pack(
                 side="left", padx=8
             )
+        if repair is not None:
+            ttk.Button(
+                row, text="Attempt automatic repair",
+                command=lambda: (self.destroy(), repair()),
+            ).pack(side="left", padx=8)
         if log_path:
             ttk.Button(
                 row, text="Open log folder",
@@ -1694,6 +1809,35 @@ class ErrorDialog(_Dialog):
     def _copy(self) -> None:
         _copy_text(self, self._text)
         self.ctx.status.set("Error text copied to the clipboard.")
+
+
+class RepairDialog(_Dialog):
+    """What the repair engine did, with the diffs of every change."""
+
+    def __init__(self, ctx: AppContext, outcome, *, on_retry=None) -> None:
+        super().__init__(ctx, "Automatic repair", width=860, height=560)
+        self._outcome = outcome
+        self._text = outcome.text()
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        box = _readonly_text(body, self._text, height=20)
+        box.pack(fill="both", expand=True)
+        self.status_var = tk.StringVar(value=outcome.message)
+        ttk.Label(self, textvariable=self.status_var, style="Muted.TLabel",
+                  padding=(12, 0)).pack(fill="x")
+        row = ttk.Frame(self, padding=(12, 6, 12, 12))
+        row.pack(fill="x")
+        ttk.Button(row, text="Copy report", command=self._copy).pack(side="left")
+        if on_retry is not None and outcome.final_ok:
+            ttk.Button(
+                row, text="Build again", style="Accent.TButton",
+                command=lambda: (self.destroy(), on_retry()),
+            ).pack(side="left", padx=8)
+        ttk.Button(row, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
+
+    def _copy(self) -> None:
+        _copy_text(self, self._text)
+        self.ctx.status.set("Repair report copied to the clipboard.")
 
 
 class SummaryDialog(_Dialog):
@@ -2093,6 +2237,407 @@ class CandidateDialog(_Dialog):
         except (ValueError, IndexError):
             return
         self.destroy()
+
+
+class PackageDialog(_Dialog):
+    """Create a distributable package (ZIP, TAR.GZ, installer, DEB, AppImage).
+
+    The dialog collects the metadata the package needs, runs the real
+    packaging in the background and shows the verified result, including the
+    dependencies that could not be resolved.
+    """
+
+    def __init__(self, ctx: AppContext, project: Path, *, output_dir: Path,
+                 prefer_adapter: str | None = None) -> None:
+        super().__init__(ctx, "Create distributable package", width=820, height=620)
+        self.project = Path(project)
+        self._prefer_adapter = prefer_adapter
+        self._result = None
+
+        from ..packaging.formats import describe_formats
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Project").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(body, text=str(self.project), style="Muted.TLabel").grid(
+            row=0, column=1, columnspan=3, sticky="w", pady=(0, 4)
+        )
+
+        self.format_var = tk.StringVar(value="zip")
+        ttk.Label(body, text="Format").grid(row=1, column=0, sticky="w", pady=(0, 4))
+        formats = describe_formats()
+        self.format_box = ttk.Combobox(
+            body, textvariable=self.format_var, state="readonly", width=22,
+            values=[f"{f['id']} - {f['name']}" for f in formats],
+        )
+        self.format_box.grid(row=1, column=1, sticky="w", pady=(0, 4))
+        self.format_box.bind("<<ComboboxSelected>>", lambda _e: self._describe_format())
+        self.format_note = tk.StringVar(value="")
+        ttk.Label(body, textvariable=self.format_note, style="Muted.TLabel", wraplength=520,
+                  justify="left").grid(row=1, column=2, columnspan=2, sticky="w", pady=(0, 4))
+
+        self.name_var = tk.StringVar(value=self.project.name)
+        self.version_var = tk.StringVar(value="1.0.0")
+        self.description_var = tk.StringVar(value="")
+        self.publisher_var = tk.StringVar(value="")
+        self.arch_var = tk.StringVar(value="x64")
+
+        fields = (
+            ("Name", self.name_var),
+            ("Version", self.version_var),
+            ("Description", self.description_var),
+            ("Publisher", self.publisher_var),
+        )
+        for index, (label, variable) in enumerate(fields):
+            row = 2 + index
+            ttk.Label(body, text=label, width=12).grid(row=row, column=0, sticky="w", pady=(0, 4))
+            ttk.Entry(body, textvariable=variable).grid(
+                row=row, column=1, columnspan=3, sticky="ew", pady=(0, 4)
+            )
+
+        ttk.Label(body, text="Architecture", width=12).grid(row=6, column=0, sticky="w", pady=(0, 4))
+        ttk.Combobox(
+            body, textvariable=self.arch_var, state="readonly", width=12,
+            values=("x64", "x86", "arm64"),
+        ).grid(row=6, column=1, sticky="w", pady=(0, 4))
+
+        self.output_var = tk.StringVar(value=str(output_dir))
+        ttk.Label(body, text="Output folder", width=12).grid(row=7, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(body, textvariable=self.output_var).grid(
+            row=7, column=1, columnspan=2, sticky="ew", pady=(0, 4)
+        )
+        ttk.Button(body, text="Browse...", command=self._browse_output).grid(
+            row=7, column=3, sticky="e", pady=(0, 4)
+        )
+
+        self.include_var = tk.StringVar(value="")
+        self.exclude_var = tk.StringVar(value="")
+        ttk.Label(body, text="Include only", width=12).grid(row=8, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(body, textvariable=self.include_var).grid(
+            row=8, column=1, columnspan=3, sticky="ew", pady=(0, 4)
+        )
+        ttk.Label(body, text="Exclude", width=12).grid(row=9, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(body, textvariable=self.exclude_var).grid(
+            row=9, column=1, columnspan=3, sticky="ew", pady=(0, 4)
+        )
+        ttk.Label(
+            body,
+            text="Patterns are separated by commas. Leave them empty to package "
+                 "everything the build produced.",
+            style="Muted.TLabel",
+        ).grid(row=10, column=0, columnspan=4, sticky="w", pady=(0, 6))
+
+        self.build_var = tk.BooleanVar(value=False)
+        self.consent_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, text="Run the build first", variable=self.build_var).grid(
+            row=11, column=0, columnspan=2, sticky="w"
+        )
+        ttk.Checkbutton(body, text="Allow project scripts", variable=self.consent_var).grid(
+            row=11, column=2, columnspan=2, sticky="w"
+        )
+
+        self.status_var = tk.StringVar(value="Choose the format and press Create package.")
+        ttk.Label(body, textvariable=self.status_var, style="Muted.TLabel", wraplength=760,
+                  justify="left").grid(row=12, column=0, columnspan=4, sticky="w", pady=(10, 4))
+
+        self.output_box = _readonly_text(body, "", height=10)
+        self.output_box.grid(row=13, column=0, columnspan=4, sticky="nsew", pady=(4, 0))
+        body.rowconfigure(13, weight=1)
+
+        row = ttk.Frame(self, padding=(12, 6, 12, 12))
+        row.pack(fill="x")
+        self.create_btn = ttk.Button(
+            row, text="Create package", style="Accent.TButton", command=self._create
+        )
+        self.create_btn.pack(side="left")
+        ttk.Button(row, text="Copy result", command=self._copy).pack(side="left", padx=8)
+        ttk.Button(row, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
+
+        self._describe_format()
+
+    # ------------------------------------------------------------------
+    def _selected_format(self) -> str:
+        return self.format_var.get().split(" - ")[0].strip()
+
+    def _describe_format(self) -> None:
+        from ..packaging.formats import describe_formats
+
+        wanted = self._selected_format()
+        for entry in describe_formats():
+            if entry["id"] != wanted:
+                continue
+            if entry["available"]:
+                self.format_note.set(f"Ready: {entry['name']}.")
+            else:
+                note = entry["note"] or "The external tool for this format is not installed."
+                self.format_note.set(f"Not available yet: {note}")
+            return
+
+    def _browse_output(self) -> None:
+        path = filedialog.askdirectory(parent=self, title="Choose the output folder")
+        if path:
+            self.output_var.set(path)
+
+    def _create(self) -> None:
+        from ..packaging import AdvancedPackager, PackageMetadata, PackageRequest
+
+        output = self.output_var.get().strip()
+        if not output:
+            self.status_var.set("Choose an output folder.")
+            return
+        metadata = PackageMetadata(
+            name=self.name_var.get().strip() or self.project.name,
+            version=self.version_var.get().strip() or "1.0.0",
+            description=self.description_var.get().strip(),
+            publisher=self.publisher_var.get().strip(),
+            architecture=self.arch_var.get().strip() or "x64",
+        )
+        request = PackageRequest(
+            project=self.project,
+            output_dir=Path(output),
+            fmt=self._selected_format(),
+            metadata=metadata,
+            include=_split_patterns(self.include_var.get()),
+            exclude=_split_patterns(self.exclude_var.get()),
+            run_build=self.build_var.get(),
+            consent=self.consent_var.get(),
+            prefer_adapter=self._prefer_adapter,
+            overwrite=True,
+        )
+        self.create_btn.configure(state="disabled")
+        self.status_var.set("Packaging...")
+        packager = AdvancedPackager(config=self.ctx.config)
+
+        def work():
+            return packager.package(request)
+
+        def done(result) -> None:
+            self.create_btn.configure(state="normal")
+            self._result = result
+            self.output_box.configure(state="normal")
+            self.output_box.delete("1.0", "end")
+            self.output_box.insert("1.0", result.text())
+            self.output_box.configure(state="disabled")
+            self.status_var.set(result.message)
+
+        def fail(exc: BaseException) -> None:
+            self.create_btn.configure(state="normal")
+            self.status_var.set(f"The packaging failed: {exc}")
+
+        self.ctx.runner.run(work, done, fail)
+
+    def _copy(self) -> None:
+        if self._result is None:
+            return
+        _copy_text(self, self._result.text())
+        self.ctx.status.set("Package summary copied to the clipboard.")
+
+
+class OptimizeDialog(_Dialog):
+    """Compare a baseline build with an optimized build and report the facts."""
+
+    def __init__(self, ctx: AppContext, project: Path, *, prefer_adapter: str | None = None) -> None:
+        super().__init__(ctx, "Optimize build", width=820, height=560)
+        self.project = Path(project)
+        self._prefer_adapter = prefer_adapter
+        self._report = None
+
+        from ..optimize.profiles import PROFILES
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Project").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(body, text=str(self.project), style="Muted.TLabel").grid(
+            row=0, column=1, columnspan=2, sticky="w", pady=(0, 4)
+        )
+
+        self.profile_var = tk.StringVar(value="release")
+        ttk.Label(body, text="Profile", width=12).grid(row=1, column=0, sticky="w", pady=(0, 4))
+        self.profile_box = ttk.Combobox(
+            body, textvariable=self.profile_var, state="readonly", width=20,
+            values=[key for key in PROFILES if key != "custom"],
+        )
+        self.profile_box.grid(row=1, column=1, sticky="w", pady=(0, 4))
+        self.profile_box.bind("<<ComboboxSelected>>", lambda _e: self._describe_profile())
+        self.profile_note = tk.StringVar(value="")
+        ttk.Label(body, textvariable=self.profile_note, style="Muted.TLabel", wraplength=520,
+                  justify="left").grid(row=1, column=2, sticky="w", pady=(0, 4))
+
+        self.tests_var = tk.StringVar(value="")
+        self.benchmark_var = tk.StringVar(value="")
+        self.consent_var = tk.BooleanVar(value=False)
+        ttk.Label(body, text="Test command", width=12).grid(row=2, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(body, textvariable=self.tests_var).grid(
+            row=2, column=1, columnspan=2, sticky="ew", pady=(0, 4)
+        )
+        ttk.Label(body, text="Benchmark", width=12).grid(row=3, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(body, textvariable=self.benchmark_var).grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=(0, 4)
+        )
+        ttk.Checkbutton(body, text="Allow project scripts", variable=self.consent_var).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        )
+        ttk.Label(
+            body,
+            text="The test and benchmark commands are optional and run exactly as "
+                 "written. Without a benchmark no runtime claim is made.",
+            style="Muted.TLabel",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        self.status_var = tk.StringVar(value="Press Compare to build twice and compare.")
+        ttk.Label(body, textvariable=self.status_var, style="Muted.TLabel", wraplength=760,
+                  justify="left").grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
+
+        self.output_box = _readonly_text(body, "", height=16)
+        self.output_box.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
+        body.rowconfigure(7, weight=1)
+
+        row = ttk.Frame(self, padding=(12, 6, 12, 12))
+        row.pack(fill="x")
+        self.compare_btn = ttk.Button(
+            row, text="Compare", style="Accent.TButton", command=self._compare
+        )
+        self.compare_btn.pack(side="left")
+        ttk.Button(row, text="Copy report", command=self._copy).pack(side="left", padx=8)
+        ttk.Button(row, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
+
+        self._describe_profile()
+
+    # ------------------------------------------------------------------
+    def _describe_profile(self) -> None:
+        from ..optimize.profiles import get_profile
+
+        profile = get_profile(self.profile_var.get())
+        if profile is None:
+            self.profile_note.set("")
+            return
+        self.profile_note.set(profile.description)
+
+    def _compare(self) -> None:
+        from ..build.compile_service import compile_project
+        from ..optimize.measure import Measurement, compare, record_optimization
+        from ..optimize.plan import OptimizationRequest, build_optimization_plan
+        from ..optimize.recommend import recommendations
+        from ..packaging.manifest import detected_toolchains
+
+        key = self.profile_var.get().strip().lower()
+        adapter_id = self._prefer_adapter or ""
+        if not adapter_id:
+            try:
+                detected = scan(self.project)
+                if detected.best is not None:
+                    adapter_id = detected.best.adapter_id
+            except EceError:
+                detected = None
+        optimization = build_optimization_plan(
+            adapter_id, OptimizationRequest.from_args(key, [])
+        )
+        if optimization.unsupported_reason:
+            self.status_var.set(optimization.unsupported_reason)
+            return
+
+        tests = _split_command(self.tests_var.get().strip()) if self.tests_var.get().strip() else None
+        benchmark = (
+            _split_command(self.benchmark_var.get().strip())
+            if self.benchmark_var.get().strip()
+            else None
+        )
+
+        self.compare_btn.configure(state="disabled")
+        self.status_var.set("Building the baseline...")
+
+        def measure_run(profile: str, opt) -> Measurement:
+            outcome = compile_project(
+                self.project,
+                config=self.ctx.config,
+                consent_granted=self.consent_var.get() if hasattr(self, "consent_var") else False,
+                prefer_adapter=self._prefer_adapter,
+                optimization=opt,
+            )
+            tests_ok: bool | None = None
+            if tests:
+                from ..build.process import run_single
+
+                tests_ok = run_single(tests, self.project, timeout=900).ok
+            measured: dict[str, float] = {}
+            if benchmark:
+                from ..build.process import run_single
+
+                measured = {"seconds": run_single(benchmark, self.project, timeout=1800).duration_seconds}
+            return Measurement(
+                profile=profile,
+                ok=outcome.ok,
+                compile_seconds=outcome.duration_seconds,
+                total_size=outcome.total_size,
+                file_count=outcome.file_count,
+                tests_ok=tests_ok,
+                benchmark=measured,
+                toolchains=detected_toolchains(),
+            )
+
+        def work():
+            baseline = measure_run("default", None)
+            if not baseline.ok:
+                raise RuntimeError("The baseline build failed, so there is nothing to compare.")
+            optimized = measure_run(optimization.profile, optimization)
+            report = compare(baseline, optimized)
+            advice = recommendations(adapter_id, optimization, report)
+            record_optimization(self.ctx.config.work_dir, report)
+            return report, advice, optimization
+
+        def done(payload) -> None:
+            report, advice, optimization = payload
+            self._report = report
+            self.compare_btn.configure(state="normal")
+            lines = [optimization.text(), "", report.text()]
+            if advice:
+                lines.append("")
+                lines.append("Recommendations:")
+                for item in advice:
+                    state = "applied" if item.applied else (
+                        "needs your approval" if item.requires_approval else "information"
+                    )
+                    lines.append(f"  [{state}] {item.text}")
+            self.output_box.configure(state="normal")
+            self.output_box.delete("1.0", "end")
+            self.output_box.insert("1.0", "\n".join(lines))
+            self.output_box.configure(state="disabled")
+            self.status_var.set("Comparison finished.")
+
+        def fail(exc: BaseException) -> None:
+            self.compare_btn.configure(state="normal")
+            self.status_var.set(f"The comparison failed: {exc}")
+
+        self.ctx.runner.run(work, done, fail)
+
+    def _copy(self) -> None:
+        if self._report is None:
+            return
+        _copy_text(self, self._report.text())
+        self.ctx.status.set("Comparison copied to the clipboard.")
+
+
+def _split_patterns(text: str) -> list[str]:
+    """Split a comma-separated list of patterns."""
+    return [piece.strip() for piece in (text or "").split(",") if piece.strip()]
+
+
+def _split_command(text: str) -> list[str]:
+    """Split a command line into an argv list, keeping quoted paths together."""
+    import shlex
+
+    parts = shlex.split(text, posix=False)
+    cleaned: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in "\"'":
+            cleaned.append(part[1:-1])
+        else:
+            cleaned.append(part)
+    return cleaned
 
 
 class AboutDialog(_Dialog):

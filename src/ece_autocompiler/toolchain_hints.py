@@ -164,6 +164,28 @@ HINTS: dict[str, InstallHint] = {
             winget="GnuPG.Gpg4win", choco="gnupg", scoop="gnupg",
             url="https://gnupg.org/download/",
         ),
+        InstallHint(
+            "inno-setup", "Inno Setup (Windows installer compiler)",
+            winget="JRSoftware.InnoSetup", choco="innosetup", scoop="innosetup",
+            url="https://jrsoftware.org/isdl.php",
+            note="needed for the 'inno' package format",
+        ),
+        InstallHint(
+            "nsis", "NSIS (Windows installer generator)",
+            winget="NSIS.NSIS", choco="nsis", scoop="nsis",
+            url="https://nsis.sourceforge.io/Download",
+            note="needed for the 'nsis' package format",
+        ),
+        InstallHint(
+            "appimage", "AppImageKit (appimagetool)",
+            url="https://github.com/AppImage/AppImageKit/releases",
+            note="needed for the 'appimage' package format",
+        ),
+        InstallHint(
+            "dpkg-deb", "dpkg-deb (Debian package builder)",
+            url="https://wiki.debian.org/debian",
+            note="ships with dpkg on Debian/Ubuntu; not available on Windows",
+        ),
     )
 }
 

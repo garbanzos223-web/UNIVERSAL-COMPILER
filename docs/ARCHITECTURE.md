@@ -24,7 +24,10 @@ into small, single-responsibility packages. Data flows in one direction:
 | `container` | The `.ece` format: `spec` (constants/struct), `codec` (compression/hash), `model` (manifest & index), `writer`, `reader`, `validator`, `security` (path safety), `diff` (container comparison), `integrity` (SHA-256 sidecars). |
 | `detection` | `markers` (file/dir markers and source hints), `toolchains` (real tool discovery via `shutil.which` + version probe), `detector.scan()` (ranked candidates, ambiguity, monorepo awareness). |
 | `adapters` | `base` (abstract `BuildAdapter` + data types), `registry` (adapter instances), `python_adapter`, `node_adapter`, `external_tool_adapter`. |
-| `build` | `process.run_command` (argv execution, timeout, cancel, redaction), `orchestrator.BuildOrchestrator` (detect → plan → build → collect → package), `history` (JSONL log of attempts), `timing` (local duration estimates + live ETA). |
+| `build` | `process.run_command` (argv execution, timeout, cancel, redaction), `orchestrator.BuildOrchestrator` (detect → plan → build → collect → package, plus `compile_project` for callers that only need the build), `compile_service` (one place that runs a build and returns its output), `history` (JSONL log of attempts), `timing` (local duration estimates + live ETA). |
+| `packaging` | Advanced package generator: `models` (request/result), `collection` (artifact + entry-point + dependency discovery), `licenses` (redistribution checks), `manifest` (metadata, file list, checksums), `validation` (read the package back), `formats` (zip, tar.gz, folder, Inno Setup, NSIS, DEB, AppImage), `packager` (the flow). |
+| `repair` | `diagnostics` (parsers per compiler + classification), `analysis` (root-cause grouping, manual actions), `rules` (deterministic repairs with diffs), `engine` (backup, apply, rebuild, verify, roll back, journal). |
+| `optimize` | `profiles` (debug/release/performance/size/balanced/custom), `plan` (flags per toolchain + conflict detection), `measure` (before/after numbers, only what was measured), `recommend` (actionable advice). |
 | `diagnostics` | `classifier` maps tool output to `Category` values and hints; `doctor` checks the machine, folders, long paths and toolchain versions. |
 | `usability` | Front-end-neutral helpers shared by CLI, GUI and tests: `guidance` (next step, failures), `health`, `plan` (dry run), `summary`, `history_query`, `wizard`. |
 | `templates` | Project skeletons for `init` (Python script/package, Node.js, C++/CMake). |
@@ -63,6 +66,18 @@ SHA-256 digests. These detect corruption and tampering *relative to the file*,
 but they are not a signature: anyone can rewrite a container and its hashes. See
 `docs/SECURITY.md`.
 
+### Verified packages, verified repairs
+A package is only reported as successful after it has been read back and every
+file has been checked against the manifest (`packaging/validation.py`). A
+repair is only reported as successful after the project has been rebuilt and
+the targeted error is gone (`repair/engine.py`); otherwise the change is
+rolled back from the backup taken before it.
+
+### Measured performance only
+The optimizer compares two real builds. A percentage is produced only when
+both numbers exist, and a runtime claim only when a benchmark command actually
+ran (`optimize/measure.py`).
+
 ## The build pipeline
 
 1. **Scan** — `detector.scan()` walks the tree (bounded, ignoring VCS/cache
@@ -88,3 +103,13 @@ but they are not a signature: anyone can rewrite a container and its hashes. See
 - **Add a container format revision**: bump `FORMAT_MINOR` in
   `container/spec.py`; unknown top-level manifest keys already survive a
   rewrite so older tools do not strip newer metadata.
+- **Add a package format**: subclass `PackageFormat` in
+  `packaging/formats/` and register it in `packaging/formats/__init__.py`;
+  the CLI, the window and the tests read the registry.
+- **Add a repair rule**: write a function that takes a `Diagnostic` and
+  returns a `RepairProposal` (with the patched text and a diff) and add it to
+  `RULES` in `repair/rules.py`. Only `high` confidence proposals are applied
+  automatically.
+- **Add an optimization profile**: add an `OptimizationProfile` in
+  `optimize/profiles.py` and, when the toolchain family is new, an applier in
+  `optimize/plan.py` that rewrites the build plan steps.

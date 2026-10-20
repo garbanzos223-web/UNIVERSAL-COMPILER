@@ -7,11 +7,12 @@ from .exe_exporter import (
     find_entry_point,
     pyinstaller_available,
 )
-from .orchestrator import BuildOrchestrator, PackageResult
+from .orchestrator import BuildOrchestrator, CompileResult, PackageResult
 from .process import RunResult, RunStepResult, run_command, run_single
 
 __all__ = [
     "BuildOrchestrator",
+    "CompileResult",
     "ExeExportResult",
     "PackageResult",
     "RunResult",
