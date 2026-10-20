@@ -338,8 +338,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — antivirus/SmartScreen, missing
   toolchains, log and history paths, container errors.
 - [Development](docs/DEVELOPMENT.md) — setup, tests, building the `.exe`.
-- [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — what changed, ready to
-  paste into a GitHub release.
+- [Release notes 1.2](docs/RELEASE_NOTES_1.2.md) — what changed in this release,
+  ready to paste into a GitHub release.
+- [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — the original alpha notes.
 - [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) — the 40
   usability improvements shipped in release 1.2.
 
