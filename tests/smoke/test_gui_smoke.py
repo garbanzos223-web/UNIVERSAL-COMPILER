@@ -554,6 +554,29 @@ class GuiSmokeTests(unittest.TestCase):
             except Exception:  # pragma: no cover
                 pass
 
+    def test_16_package_dialog_previews_without_writing(self) -> None:
+        project = self.tmp / "previewproj"
+        project.mkdir(exist_ok=True)
+        (project / "app.py").write_text("print('preview')\n", encoding="utf-8")
+        out = self.tmp / "preview-out"
+        out.mkdir(exist_ok=True)
+
+        dialog = PackageDialog(self.ctx, project, output_dir=out)
+        self.root.update()
+        try:
+            dialog.output_var.set(str(out))
+            dialog._preview()
+            text = dialog.output_box.get("1.0", "end")
+            self.assertIn("app.py", text)
+            self.assertIn("Package plan", text)
+            # A preview writes nothing.
+            self.assertEqual(list(out.glob("*.zip")), [])
+        finally:
+            try:
+                dialog.destroy()
+            except Exception:  # pragma: no cover
+                pass
+
     def test_15_repair_action_repairs_a_broken_project(self) -> None:
         project = self.tmp / "repairproj"
         project.mkdir(exist_ok=True)

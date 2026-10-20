@@ -2381,6 +2381,7 @@ class PackageDialog(_Dialog):
             row, text="Create package", style="Accent.TButton", command=self._create
         )
         self.create_btn.pack(side="left")
+        ttk.Button(row, text="Preview", command=self._preview).pack(side="left", padx=8)
         ttk.Button(row, text="Copy result", command=self._copy).pack(side="left", padx=8)
         ttk.Button(row, text="Close", style="Ghost.TButton", command=self.destroy).pack(side="right")
 
@@ -2389,6 +2390,30 @@ class PackageDialog(_Dialog):
     # ------------------------------------------------------------------
     def _selected_format(self) -> str:
         return self.format_var.get().split(" - ")[0].strip()
+
+    def _build_request(self):
+        """The package request built from the fields of this dialog."""
+        from ..packaging import PackageMetadata, PackageRequest
+
+        metadata = PackageMetadata(
+            name=self.name_var.get().strip() or self.project.name,
+            version=self.version_var.get().strip() or "1.0.0",
+            description=self.description_var.get().strip(),
+            publisher=self.publisher_var.get().strip(),
+            architecture=self.arch_var.get().strip() or "x64",
+        )
+        return PackageRequest(
+            project=self.project,
+            output_dir=Path(self.output_var.get().strip() or self.ctx.config.output_dir),
+            fmt=self._selected_format(),
+            metadata=metadata,
+            include=_split_patterns(self.include_var.get()),
+            exclude=_split_patterns(self.exclude_var.get()),
+            run_build=self.build_var.get(),
+            consent=self.consent_var.get(),
+            prefer_adapter=self._prefer_adapter,
+            overwrite=True,
+        )
 
     def _describe_format(self) -> None:
         from ..packaging.formats import describe_formats
@@ -2409,21 +2434,31 @@ class PackageDialog(_Dialog):
         if path:
             self.output_var.set(path)
 
+    def _preview(self) -> None:
+        """Show what would be packaged, without writing anything."""
+        from ..packaging import AdvancedPackager
+
+        packager = AdvancedPackager(config=self.ctx.config)
+        plan = packager.plan(self._build_request())
+        self.output_box.configure(state="normal")
+        self.output_box.delete("1.0", "end")
+        self.output_box.insert("1.0", plan.text())
+        self.output_box.configure(state="disabled")
+        self.status_var.set(
+            "Nothing was written. Press Create package to build it."
+            if plan.ok
+            else "This package cannot be created as it is."
+        )
+
     def _create(self) -> None:
         from ..optimize.plan import OptimizationRequest, build_optimization_plan
-        from ..packaging import AdvancedPackager, PackageMetadata, PackageRequest
+        from ..packaging import AdvancedPackager
 
         output = self.output_var.get().strip()
         if not output:
             self.status_var.set("Choose an output folder.")
             return
-        metadata = PackageMetadata(
-            name=self.name_var.get().strip() or self.project.name,
-            version=self.version_var.get().strip() or "1.0.0",
-            description=self.description_var.get().strip(),
-            publisher=self.publisher_var.get().strip(),
-            architecture=self.arch_var.get().strip() or "x64",
-        )
+        request = self._build_request()
         optimization = None
         profile = self.profile_var.get().strip().lower()
         if profile and profile != "none":
@@ -2434,22 +2469,11 @@ class PackageDialog(_Dialog):
             if optimization.unsupported_reason:
                 self.status_var.set(optimization.unsupported_reason)
                 return
-        request = PackageRequest(
-            project=self.project,
-            output_dir=Path(output),
-            fmt=self._selected_format(),
-            metadata=metadata,
-            include=_split_patterns(self.include_var.get()),
-            exclude=_split_patterns(self.exclude_var.get()),
-            run_build=self.build_var.get(),
-            consent=self.consent_var.get(),
-            prefer_adapter=self._prefer_adapter,
-            overwrite=True,
-            optimization=optimization,
-        )
+        request.optimization = optimization
+        packager = AdvancedPackager(config=self.ctx.config)
+
         self.create_btn.configure(state="disabled")
         self.status_var.set("Packaging...")
-        packager = AdvancedPackager(config=self.ctx.config)
 
         def work():
             return packager.package(request)
