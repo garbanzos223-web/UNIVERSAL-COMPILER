@@ -239,6 +239,33 @@ subsystems and that they work, instead of trusting that the build succeeded.
 
 ---
 
+## Session: GUI smoke coverage for the new features
+
+**Goal.** The new dialogs were only constructed by the smoke test; the code
+paths behind them were never run.
+
+### What was done
+
+Three GUI smoke tests now drive the real workflows:
+
+- the **package dialog** creates a real ZIP package of a throwaway project and
+  the test checks the archive and its manifest;
+- the **optimization dialog** explains that an interpreter project has no
+  compiler options, instead of pretending to optimize something;
+- the **Attempt automatic repair** action repairs a project with a real syntax
+  error through the window and shows the report dialog.
+
+The GUI smoke test also no longer touches the real application data of the
+machine: it sets `ECE_AUTOCOMPILER_HOME` to a temporary folder for the whole
+class.
+
+### Tests executed
+
+- `python -m unittest discover -s tests -t .` -> **403 tests, OK (skipped=1)**.
+- `python tools/lint_stdlib.py` -> **85 files clean**.
+
+---
+
 ## Session: 1.2 usability release (40 improvements)
 
 See [docs/RELEASE_NOTES_1.2.md](RELEASE_NOTES_1.2.md) for the user-facing

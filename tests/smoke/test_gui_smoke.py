@@ -10,6 +10,7 @@ global shortcut bindings.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -94,10 +95,15 @@ class GuiSmokeTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.tmp = Path(tempfile.mkdtemp(prefix="ece_smoke_"))
         cls.sample = _build_sample_container(cls.tmp)
+        # The window must not touch the real application data of this PC.
+        cls.home = Path(tempfile.mkdtemp(prefix="ece_smoke_home_"))
+        cls._old_home = os.environ.get("ECE_AUTOCOMPILER_HOME", "")
+        os.environ["ECE_AUTOCOMPILER_HOME"] = str(cls.home)
         try:
             cls.root = tk.Tk()
         except tk.TclError as exc:  # no display (headless session)
             shutil.rmtree(cls.tmp, ignore_errors=True)
+            shutil.rmtree(cls.home, ignore_errors=True)
             raise unittest.SkipTest(f"no display available: {exc}") from exc
         configure_root_window(cls.root)
         apply_theme(cls.root)
@@ -120,6 +126,11 @@ class GuiSmokeTests(unittest.TestCase):
                 root.destroy()
             except Exception:  # pragma: no cover
                 pass
+        if cls._old_home:
+            os.environ["ECE_AUTOCOMPILER_HOME"] = cls._old_home
+        else:
+            os.environ.pop("ECE_AUTOCOMPILER_HOME", None)
+        shutil.rmtree(getattr(cls, "home", Path("\\")), ignore_errors=True)
         shutil.rmtree(getattr(cls, "tmp", Path("\\")), ignore_errors=True)
 
     # -------------------------------------------------------------- helpers
@@ -489,6 +500,81 @@ class GuiSmokeTests(unittest.TestCase):
                     dialog.destroy()
                 except Exception:  # pragma: no cover - already gone
                     pass
+
+    def test_13_package_dialog_creates_a_real_package(self) -> None:
+        project = self.tmp / "packproj"
+        project.mkdir(exist_ok=True)
+        (project / "app.py").write_text("print('packaged')\n", encoding="utf-8")
+        out = self.tmp / "packages"
+        out.mkdir(exist_ok=True)
+
+        dialog = PackageDialog(self.ctx, project, output_dir=out)
+        self.root.update()
+        try:
+            dialog.output_var.set(str(out))
+            dialog.name_var.set("Smoke")
+            dialog.version_var.set("9.9.9")
+            dialog._create()
+            finished = self._wait(
+                lambda: "created" in str(dialog.status_var.get()).lower()
+                or "failed" in str(dialog.status_var.get()).lower(),
+                timeout=60,
+            )
+            self.assertTrue(finished, f"packaging never finished: {dialog.status_var.get()}")
+            archives = list(out.glob("*.zip"))
+            self.assertEqual(len(archives), 1, f"no package was produced: {dialog.status_var.get()}")
+            import zipfile
+
+            with zipfile.ZipFile(archives[0]) as archive:
+                names = archive.namelist()
+            self.assertIn("package-manifest.json", names)
+            self.assertIn("app.py", names)
+        finally:
+            try:
+                dialog.destroy()
+            except Exception:  # pragma: no cover
+                pass
+
+    def test_14_optimize_dialog_explains_an_unsupported_project(self) -> None:
+        project = self.tmp / "optproj"
+        project.mkdir(exist_ok=True)
+        (project / "app.py").write_text("print('x')\n", encoding="utf-8")
+
+        dialog = OptimizeDialog(self.ctx, project)
+        self.root.update()
+        try:
+            dialog.profile_var.set("release")
+            dialog._compare()
+            # An interpreter project has no compiler options: the dialog has to
+            # say so instead of pretending to optimize something.
+            self.assertIn("interpreter", str(dialog.status_var.get()).lower())
+        finally:
+            try:
+                dialog.destroy()
+            except Exception:  # pragma: no cover
+                pass
+
+    def test_15_repair_action_repairs_a_broken_project(self) -> None:
+        project = self.tmp / "repairproj"
+        project.mkdir(exist_ok=True)
+        source = project / "app.py"
+        source.write_text("if True\n    print(1)\n", encoding="utf-8")
+
+        self.win.project_row.var.set(str(project))
+        self.root.update()
+        self.win._attempt_repair()
+        finished = self._wait(
+            lambda: any(
+                isinstance(w, tk.Toplevel) and w.title().endswith("Automatic repair")
+                for w in self.root.winfo_children()
+            ),
+            timeout=90,
+        )
+        self.assertTrue(finished, "the repair dialog never appeared")
+        self.assertIn("if True:", source.read_text(encoding="utf-8"))
+        for widget in self.root.winfo_children():
+            if isinstance(widget, tk.Toplevel) and widget.title().endswith("Automatic repair"):
+                widget.destroy()
 
 
 def _fake_repair_outcome():

@@ -23,9 +23,9 @@ Legend:
 | Java (Maven) | `pom.xml` | `java-maven` | `mvn` | Tool-gated — `mvn package -DskipTests` |
 | Java (Gradle) | `build.gradle` | `java-gradle` | `gradle` | Tool-gated — `gradle build -x test` |
 | Kotlin (Gradle) | `build.gradle.kts` | `kotlin-gradle` | `gradle` | Tool-gated — `gradle build -x test` |
-| C/C++ (CMake) | `CMakeLists.txt` | `cpp-cmake` | `cmake` (+ generator) | Tool-gated — `cmake -S . -B build` |
-| C/C++ (Make) | `Makefile`, `GNUmakefile` | `cpp-make` | `make` | Tool-gated — `make` |
-| C/C++ (Meson) | `meson.build` | `cpp-meson` | `ninja` (with meson) | Tool-gated — grouped with the ninja/meson family |
+| C/C++ (CMake) | `CMakeLists.txt` | `cpp-cmake` | `cmake` (+ generator) | Tool-gated — `cmake -S . -B build` **and** `cmake --build build --config Release --parallel N` |
+| C/C++ (Make) | `Makefile`, `GNUmakefile` | `cpp-make` | `make` | Tool-gated — `make -j N` |
+| C/C++ (Meson) | `meson.build` | `cpp-meson` | `meson` + `ninja` | Tool-gated — `meson setup build` + `ninja -C build -j N` |
 | PHP | `composer.json` | `php` | `php` | Tool-gated — `php -l` per file (syntax check) |
 | Unity | `Assets/` **and** `ProjectSettings/` directories | `unity` | Unity editor | Tool-gated — no automatic CLI build; detected and reported |
 | Unreal Engine | `*.uproject` | `unreal` | Unreal engine | Tool-gated — no automatic CLI build; detected and reported |
@@ -59,21 +59,45 @@ package manager is in use, and the build honors it:
 - **Node:** `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, `bun.lockb`/`bun.lock` → bun, otherwise npm.
 - **Python:** `poetry.lock` → poetry, `uv.lock` → uv, `pdm.lock` → pdm, otherwise pip.
 
+## Distributable packages
+
+The `package` command turns a project into a distributable, independently of
+the language it is written in. The formats and what they need:
+
+| Format | Needs | Notes |
+| --- | --- | --- |
+| `zip` | nothing | Reproducible: two runs over the same inputs are byte-identical. |
+| `tar.gz` | nothing | Same, with UNIX permissions. |
+| `folder` | nothing | An unpacked, ready-to-run directory. |
+| `inno` | Inno Setup | A Windows installer; the generated `.iss` script is kept. |
+| `nsis` | NSIS | A Windows installer; the generated `.nsi` script is kept. |
+| `deb` | `dpkg-deb` | Debian package (Linux). |
+| `appimage` | `appimagetool` | AppImage (Linux). |
+
+Every package is verified after it is written, and its manifest lists the
+metadata, the files and their SHA-256 checksums. See
+[docs/ADVANCED_FEATURES.md](ADVANCED_FEATURES.md).
+
 ## Tool discovery
 
 `detection/toolchains.py` probes for: `python`, `node`, `npm`, `dotnet`,
-`cargo`, `rustc`, `go`, `java`, `javac`, `mvn`, `gradle`, `cmake`, `ninja`,
-`make`, `gcc`, `gpp`, `clang`, `cl`, `msbuild`, `php`, `git`.
+`cargo`, `rustc`, `go`, `java`, `javac`, `mvn`, `gradle`, `cmake`, `meson`,
+`ninja`, `make`, `gcc`, `gpp`, `clang`, `cl`, `msbuild`, `php`, `git`.
 
 Run `python -m ece_autocompiler tools` or open the **Toolchains** tab to see
 what is present on your machine. `dotnet` distinguishes "runtime present but no
 SDK", which matters because `dotnet publish` needs the SDK.
 
+The probe result is cached locally for 15 minutes (it costs one process per
+tool) and dropped as soon as `PATH` changes. `tools --refresh` and
+`doctor --refresh` re-probe on demand.
+
 ## Adding support for a technology
 
 - For a **CLI tool** with a one-line build command: add an `ExternalToolAdapter`
   entry in `adapters/registry.py`, a detection marker in
-  `detection/markers.py`, and (if needed) a probe in `detection/toolchains.py`.
+  `detection/markers.py`, a probe in `detection/toolchains.py` and a build-plan
+  builder in `adapters/native_plans.py`.
 - For a **first-class** integration: subclass `BuildAdapter` in `adapters/`,
   implement its six abstract methods, and add it to `DEFAULT_ADAPTERS`.
 
