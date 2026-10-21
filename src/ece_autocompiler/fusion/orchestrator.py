@@ -18,6 +18,7 @@ Every step records what actually happened; a step that could not run says so.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from typing import Any, Callable
 from ..adapters.registry import AdapterRegistry
 from ..container import ContainerReader, ContainerWriter, Manifest, PayloadItem
 from ..detection import scan
+from ..errors import EceError
 from .bridges import BridgePlan, plan_all, verify_architecture_pair
 from .compatibility import (
     CompatibilityReport,
@@ -36,10 +38,12 @@ from .compatibility import (
     prebuilt_architecture_conflicts,
 )
 from .models import BuildTask, Module, ModuleGraph, now_utc
+from .incremental import CacheState, compute_key, find_cache_hit
 from .modules import build_graph
+from .unreal import execute_cmd, plan_unreal_module
 from .workspace import FusionWorkspace
 
-logger = logging = __import__("logging").getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 ProgressFn = Callable[[str, str], None]
 
@@ -103,6 +107,7 @@ class FusionOrchestrator:
         self._cancel = cancel
         self.registry = AdapterRegistry()
         self._bridges: dict[tuple[str, str], BridgePlan] = {}
+        self._unreal_plans: dict[str, Any] = {}
 
     def _cancelled(self) -> bool:
         return bool(self._cancel is not None and self._cancel.is_set())
@@ -111,7 +116,14 @@ class FusionOrchestrator:
     # main entry
     # ------------------------------------------------------------------
 
-    def run(self, *, package_format: str | None = None, output: Path | None = None) -> FusionResult:
+    def run(
+        self,
+        *,
+        package_format: str | None = None,
+        output: Path | None = None,
+        use_cache: bool = True,
+        repair_attempts: int = 0,
+    ) -> FusionResult:
         fmt = package_format or self.workspace.config.package_format
         messages: list[str] = []
         start = time.time()
@@ -138,18 +150,54 @@ class FusionOrchestrator:
         self._progress("build", "Building modules in dependency order")
         module_tasks: dict[str, BuildTask] = {}
         graph.tasks = []
+        module_repairs: dict[str, dict] = {}
+        cache = CacheState.load(self.workspace.root)
+        cache_hits: set[str] = set()
+        dep_keys: dict[str, str] = {}
         for module_id in graph.order:
             module = graph.module(module_id)
             if module is None:
                 continue
-            task = self._build_module(graph, module)
+            task = self._build_module(
+                graph, module, cache=cache, dep_keys=dep_keys, cache_hits=cache_hits
+            )
+            if task.status == "failed" and repair_attempts > 0:
+                self._progress("repair", f"Module {module_id} failed; running the repair engine")
+                result_entry = repair_module(
+                    module,
+                    self._module_root(module),
+                    self.workspace,
+                    max_attempts=repair_attempts,
+                    progress=None,
+                )
+                module_repairs[module_id] = result_entry.to_dict()
+                if result_entry.repaired:
+                    task = self._build_module(graph, module)  # force rebuild after repairs
             module_tasks[module_id] = task
             graph.tasks.append(task)
+            if task.status == "built":
+                key = self._cache_key_for(module, dep_keys)
+                if key:
+                    dep_keys[module_id] = key
             if self._cancelled():
                 messages.append("Build cancelled by user.")
                 break
 
         artifacts, artifact_paths = self._collect_artifacts(graph, module_tasks)
+        if use_cache:
+            for module in graph.modules:
+                task = module_tasks.get(module.module_id)
+                if task is None or task.status != "built":
+                    continue
+                key = dep_keys.get(module.module_id, "")
+                if not key:
+                    continue
+                outputs = [str(p) for p in artifact_paths.get(module.module_id, [])]
+                if not outputs:
+                    root = self._module_root(module)
+                    outputs = [str(root / rel) for rel in module.source_files[:20]]
+                cache.record(module.module_id, key, outputs)
+            cache.save()
         self._verify_integration_architecture(graph, bridges=self._bridges, artifact_paths=artifact_paths)
 
         self._progress("assets", "Staging assets")
@@ -202,6 +250,11 @@ class FusionOrchestrator:
                 for (c, p), plan in sorted(self._bridges.items())
             ],
             "compatibility": {"checks": compat.checks, "warnings": compat.warnings},
+            "unreal_plans": {
+                module_id: plan.to_dict() for module_id, plan in self._unreal_plans.items()
+            },
+            "cache_hits": sorted(cache_hits),
+            "module_repairs": module_repairs,
             "assets": asset_notes,
             "assembly": assembly_notes,
             "planning_conflicts": conflicts_snapshot,
@@ -259,7 +312,34 @@ class FusionOrchestrator:
     # building one module
     # ------------------------------------------------------------------
 
-    def _build_module(self, graph: ModuleGraph, module: Module) -> BuildTask:
+    def _cache_key_for(self, module: Module, dep_keys: dict[str, str]) -> str:
+        """Compute a module's incremental cache key, from real file hashes."""
+        try:
+            root = self._module_root(module)
+        except StopIteration:
+            return ""
+        sources = [root / rel for rel in module.source_files if rel]
+        return compute_key(
+            module.module_id,
+            sources,
+            adapter_id=module.adapter_id,
+            configuration=module.build_configuration,
+            target_arch=module.target_architecture,
+            dependency_keys={
+                dep: dep_keys.get(dep, "")
+                for dep in module.dependencies
+            },
+        )
+
+    def _build_module(
+        self,
+        graph: ModuleGraph,
+        module: Module,
+        *,
+        cache: CacheState | None = None,
+        dep_keys: dict[str, str] | None = None,
+        cache_hits: set[str] | None = None,
+    ) -> BuildTask:
         if module.language == "assets":
             return BuildTask(
                 task_id=f"module:{module.module_id}",
@@ -268,6 +348,8 @@ class FusionOrchestrator:
                 kind="asset",
                 status="built",
             )
+        if module.language == "unreal":
+            return self._build_unreal(module)
 
         task = BuildTask(
             task_id=f"module:{module.module_id}",
@@ -276,6 +358,18 @@ class FusionOrchestrator:
         )
         for dep in module.dependencies:
             task.depends_on.append(f"module:{dep}")
+
+        # Dependency-aware cache: rebuild only when inputs actually changed.
+        if cache is not None and dep_keys is not None:
+            key = self._cache_key_for(module, dep_keys)
+            if key and find_cache_hit(module.module_id, cache, key):
+                task.status = "built"
+                task.cached = True
+                module.status = "built"
+                module.notes.append("cached: inputs and dependencies unchanged since the last build")
+                if cache_hits is not None:
+                    cache_hits.add(module.module_id)
+                return task
 
         root = self._module_root(module)
         try:
@@ -316,13 +410,64 @@ class FusionOrchestrator:
 
         log_path = self.workspace.generated_dir / f"build-{module.module_id}.log"
         started = time.time()
-        result = adapter.execute_build(
-            plan, progress=None, cancel=self._cancel, log_path=log_path, consent_granted=True
-        )
+        try:
+            result = adapter.execute_build(
+                plan, progress=None, cancel=self._cancel, log_path=log_path, consent_granted=True
+            )
+        except EceError as exc:
+            task.duration_seconds = round(time.time() - started, 3)
+            task.status = "failed"
+            task.error = f"Build was not run: {exc}"
+            module.status = "failed"
+            return task
         task.duration_seconds = round(time.time() - started, 3)
         task.status = "built" if result.ok else "failed"
         task.error = "" if result.ok else (result.message or "build failed")
         module.status = "built" if result.ok else "failed"
+        if not result.ok and cache is not None:
+            cache.entries.pop(module.module_id, None)
+        return task
+
+    def _build_unreal(self, module: Module) -> BuildTask:
+        """Build an Unreal module through the engine's own pipeline (§7)."""
+        task = BuildTask(
+            task_id=f"module:{module.module_id}",
+            module_id=module.module_id,
+            title=f"unreal build ({module.module_id})",
+        )
+        config = self.workspace.config
+        toolchains = getattr(config, "toolchains", {})
+        engine_hint = Path(toolchains["unreal-engine"]) if toolchains.get("unreal-engine") else None
+        plan = plan_unreal_module(
+            module,
+            self._module_root(module),
+            configuration={  # unreal uses its own configuration names
+                "release": "Development",
+                "debug": "Debug",
+            }.get(config.configuration, "Development"),
+            package_unreal=config.package_unreal,
+            archive_dir=self.workspace.generated_dir / "unreal-package",
+            engine_root_hint=engine_hint,
+        )
+        for cmd_name, cmd in (("build", plan.build_cmd), ("package", plan.package_cmd)):
+            if cmd:
+                task.command.append(" ".join(cmd))
+        if not plan.ready:
+            task.status = "failed"
+            task.error = "Unreal build NOT run (engine/toolchain missing): " + "; ".join(plan.missing)
+            module.status = "failed"
+            module.notes.append("unreal plan: not run on this host")
+            return task
+        module.notes.append(f"unreal engine: {plan.engine_root} ({plan.engine_version})")
+        if plan.asset_script_cmd:
+            task.command.append("asset script cmd configured (editor, build-time only)")
+        self._unreal_plans[module.module_id] = plan
+        started = time.time()
+        ok, output = execute_cmd(plan.build_cmd, cancel=self._cancel)
+        task.duration_seconds = round(time.time() - started, 3)
+        task.status = "built" if ok else "failed"
+        task.error = "" if ok else output.strip()[:800]
+        module.status = "built" if ok else "failed"
         return task
 
     def _module_root(self, module: Module) -> Path:
@@ -438,6 +583,30 @@ class FusionOrchestrator:
                 "own BuildCookRun pipeline; ECE only stages external modules "
                 "around it and reports the engine's absence honestly."
             )
+            plan = self._unreal_plans.get(module.module_id)
+            if plan is not None and plan.package_cmd and module.status == "built":
+                self._progress("assemble", f"Unreal BuildCookRun for {module.module_id}")
+                ok, output = execute_cmd(plan.package_cmd, cancel=self._cancel)
+                notes.append(
+                    f"unreal packaging for {module.module_id}: "
+                    + ("BuildCookRun completed" if ok else f"BuildCookRun FAILED - {output.strip()[:400]}")
+                )
+                if ok:
+                    staged = self.workspace.generated_dir / "unreal-package"
+                    if staged.is_dir():
+                        for item in sorted(staged.rglob("*")):
+                            if not item.is_file():
+                                continue
+                            rel = item.relative_to(staged)
+                            dest = assembly_dir / rel
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(item, dest)
+                        notes.append(f"archived game merged into the application: {len(list(staged.rglob('*')))} files")
+            elif plan is not None and plan.package_cmd:
+                notes.append(
+                    f"unreal packaging for {module.module_id} skipped: the build "
+                    "did not succeed, so per §7 no package is produced."
+                )
 
         for module in graph.modules:
             if module.status != "built" or module.language in {"assets", "unreal"}:

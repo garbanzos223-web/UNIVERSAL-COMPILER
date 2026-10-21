@@ -66,6 +66,8 @@ class FusionConfig:
     toolchains: dict[str, str] = field(default_factory=dict)
     #: Roles for Python components inside an engine project.
     python_roles: dict[str, str] = field(default_factory=dict)
+    #: Run Unreal's BuildCookRun packaging when the engine is installed.
+    package_unreal: bool = False
     description: str = ""
     notes: str = ""
 
@@ -90,6 +92,7 @@ class FusionConfig:
             "runtime_requirements": list(self.runtime_requirements),
             "toolchains": dict(self.toolchains),
             "python_roles": dict(self.python_roles),
+            "package_unreal": self.package_unreal,
             "description": self.description,
             "notes": self.notes,
         }
@@ -102,8 +105,8 @@ class FusionConfig:
             "name", "version", "entry_point", "target", "module_dependencies",
             "integration_methods", "asset_dirs", "include", "exclude",
             "package_format", "optimization_profile", "test_commands",
-            "runtime_requirements", "toolchains", "python_roles", "description",
-            "notes",
+            "runtime_requirements", "toolchains", "python_roles", "package_unreal",
+            "description", "notes",
         }
         config = cls(
             name=str(raw.get("name", "application")),
@@ -128,6 +131,7 @@ class FusionConfig:
             runtime_requirements=list(raw.get("runtime_requirements") or []),
             toolchains={str(k): str(v) for k, v in (raw.get("toolchains") or {}).items()},
             python_roles={str(k): str(v) for k, v in (raw.get("python_roles") or {}).items()},
+            package_unreal=bool(raw.get("package_unreal", False)),
             description=str(raw.get("description", "")),
             notes=str(raw.get("notes", "")),
         )

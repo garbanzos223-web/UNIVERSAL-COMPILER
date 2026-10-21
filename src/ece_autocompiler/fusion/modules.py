@@ -19,9 +19,8 @@ import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-from .models import BuildTask, Module, ModuleGraph
+from .models import Module, ModuleGraph
 from .workspace import _FILE_LANGUAGE, FusionWorkspace, WorkspaceInput
 
 logger = logging.getLogger(__name__)

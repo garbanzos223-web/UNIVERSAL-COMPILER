@@ -423,6 +423,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_fuse_build.add_argument("-o", "--output", help="Output file for ece/zip formats.")
     p_fuse_build.add_argument("--json", action="store_true", help="Emit JSON summary.")
+    p_fuse_build.add_argument(
+        "--no-cache", action="store_true", help="Rebuild every module even when its inputs are unchanged."
+    )
+    p_fuse_build.add_argument(
+        "--repair-attempts", type=int, default=0,
+        help="When a module build fails, try the repair engine this many times (default: 0 = off).",
+    )
 
     return parser
 
@@ -1701,7 +1708,6 @@ def cmd_fuse(args) -> int:
     import json as _json
     from pathlib import Path as _Path
 
-    from .fusion.compatibility import CompatibilityReport
     from .fusion.modules import build_graph
     from .fusion.orchestrator import FusionOrchestrator
 
@@ -1750,7 +1756,10 @@ def cmd_fuse(args) -> int:
         orchestrator = FusionOrchestrator(
             workspace, progress=lambda stage, detail: _print(f"[{stage}] {detail}")
         )
-        result = orchestrator.run(package_format=args.format, output=output)
+        result = orchestrator.run(
+            package_format=args.format, output=output,
+            use_cache=not args.no_cache, repair_attempts=max(0, args.repair_attempts),
+        )
         if args.json:
             _print(_json.dumps(result.report, indent=2, ensure_ascii=False))
         else:
@@ -1758,6 +1767,8 @@ def cmd_fuse(args) -> int:
                 _print(message)
             for task in result.report.get("tasks", []):
                 status = task["status"]
+                if task.get("cached"):
+                    status += " (cached)"
                 line = f"  {task['module_id']}: {status}"
                 if task.get("error"):
                     line += f" - {task['error']}"
