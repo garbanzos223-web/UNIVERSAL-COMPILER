@@ -1,9 +1,12 @@
 # ECE Universal AutoCompiler 1.2 — New visuals and useful tools
 
-Draft for a GitHub release: **Releases → Draft a new release**, tag `1.2`,
-target `main`, title **New visuals and useful tools**, then paste the section
-below. This is a source release; `scripts\build_exe.ps1` builds the verified
-desktop and console executables locally.
+Ready to publish: **Releases → Draft a new release**, tag `1.2`, target
+`main`, title **New visuals and useful tools**, then paste the section below
+and attach the two verified binaries listed at the end.
+
+The binaries are produced and verified locally by
+`powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1` (which also
+writes `dist\release.json` with their size and SHA-256).
 
 ---
 
