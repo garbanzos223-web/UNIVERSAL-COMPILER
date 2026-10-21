@@ -347,6 +347,83 @@ def build_parser() -> argparse.ArgumentParser:
     p_repair.add_argument("--json", action="store_true", help="Emit JSON.")
 
     sub.add_parser("gui", help="Launch the desktop interface.")
+
+    # -- fusion engine ---------------------------------------------------
+    p_ws = sub.add_parser(
+        "workspace", help="Create and manage a multi-input fusion workspace."
+    )
+    ws_sub = p_ws.add_subparsers(dest="workspace_command", required=True)
+    p_ws_create = ws_sub.add_parser("create", help="Create a new fusion workspace.")
+    p_ws_create.add_argument("directory", help="New workspace directory.")
+    p_ws_create.add_argument("--name", help="Application name (default: folder name).")
+    p_ws_add = ws_sub.add_parser("add", help="Import files or directories into the workspace.")
+    p_ws_add.add_argument("workspace", help="Workspace directory.")
+    p_ws_add.add_argument("paths", nargs="+", help="Files/directories to import.")
+    p_ws_add.add_argument(
+        "--kind",
+        choices=("auto", "file", "directory", "project", "asset", "library"),
+        default="auto",
+        help="Input kind (default: auto-detected).",
+    )
+    p_ws_add.add_argument(
+        "--link", action="store_true",
+        help="Reference the input in place instead of copying it into the workspace.",
+    )
+    p_ws_add.add_argument("--module", help="Assign the input to a module id.")
+    p_ws_remove = ws_sub.add_parser("remove", help="Remove an input from the workspace.")
+    p_ws_remove.add_argument("workspace", help="Workspace directory.")
+    p_ws_remove.add_argument("input_id", help="Input id (see 'workspace list').")
+    p_ws_remove.add_argument(
+        "--keep-files", action="store_true",
+        help="Leave the imported copy on disk; just forget the input.",
+    )
+    p_ws_replace = ws_sub.add_parser("replace", help="Update an input from a new source.")
+    p_ws_replace.add_argument("workspace", help="Workspace directory.")
+    p_ws_replace.add_argument("input_id", help="Input id to replace.")
+    p_ws_replace.add_argument("source", help="New source path.")
+    p_ws_assign = ws_sub.add_parser("assign", help="Assign an input to a module id.")
+    p_ws_assign.add_argument("workspace", help="Workspace directory.")
+    p_ws_assign.add_argument("input_id", help="Input id.")
+    p_ws_assign.add_argument("module_id", help="Module id to assign the input to.")
+    p_ws_list = ws_sub.add_parser("list", help="List the workspace inventory.")
+    p_ws_list.add_argument("workspace", help="Workspace directory.")
+    p_ws_list.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_ws_config = ws_sub.add_parser("config", help="Show or change workspace configuration.")
+    p_ws_config.add_argument("workspace", help="Workspace directory.")
+    p_ws_config.add_argument("--show", action="store_true", help="Print the current configuration.")
+    p_ws_config.add_argument("--entry-point", help="Set the application entry module.")
+    p_ws_config.add_argument("--name", help="Set the application name.")
+    p_ws_config.add_argument("--version", help="Set the application version.")
+    p_ws_config.add_argument(
+        "--package-format", choices=("ece", "zip", "folder"),
+        help="Packaging format of the fused application.",
+    )
+    p_ws_config.add_argument(
+        "--depend", action="append", default=[],
+        help="Declare a module dependency 'consumer=provider' (repeatable).",
+    )
+    p_ws_config.add_argument(
+        "--asset-dir", action="append", default=[],
+        help="Declare a workspace-relative asset directory (repeatable).",
+    )
+
+    p_fuse = sub.add_parser("fuse", help="Fusion engine: plan, validate or build a workspace.")
+    fuse_sub = p_fuse.add_subparsers(dest="fuse_command", required=True)
+    p_fuse_plan = fuse_sub.add_parser("plan", help="Show modules, order, bridges and conflicts; build nothing.")
+    p_fuse_plan.add_argument("workspace", help="Workspace directory.")
+    p_fuse_plan.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_fuse_validate = fuse_sub.add_parser("validate", help="Compatibility report for the workspace.")
+    p_fuse_validate.add_argument("workspace", help="Workspace directory.")
+    p_fuse_validate.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_fuse_build = fuse_sub.add_parser("build", help="Assemble, build and package the application.")
+    p_fuse_build.add_argument("workspace", help="Workspace directory.")
+    p_fuse_build.add_argument(
+        "--format", choices=("ece", "zip", "folder"),
+        help="Package format (default: the configured one).",
+    )
+    p_fuse_build.add_argument("-o", "--output", help="Output file for ece/zip formats.")
+    p_fuse_build.add_argument("--json", action="store_true", help="Emit JSON summary.")
+
     return parser
 
 
@@ -1496,6 +1573,204 @@ def cmd_gui(args) -> int:
     return run_app()
 
 
+# ---------------------------------------------------------------------------
+# fusion engine commands
+# ---------------------------------------------------------------------------
+
+
+def _load_workspace_or_exit(path: str):
+    from .fusion.workspace import FusionWorkspace, WorkspaceError
+
+    try:
+        return FusionWorkspace.load(path)
+    except WorkspaceError as exc:
+        _print(f"error: {exc}")
+        raise SystemExit(EXIT_USAGE) from exc
+
+
+def _workspace_input_line(inp) -> str:
+    kind = inp.kind if not inp.linked else f"{inp.kind} (linked)"
+    origin = inp.source if len(inp.source) < 60 else inp.source[:57] + "..."
+    return (
+        f"{inp.input_id:12} {kind:22} {inp.detected_type or '?':12} "
+        f"{inp.file_count:6} files  {inp.total_bytes:12,} B  {origin}"
+    )
+
+
+def cmd_workspace(args) -> int:
+    from .fusion.workspace import FusionWorkspace, WorkspaceError
+
+    command = args.workspace_command
+    try:
+        if command == "create":
+            from pathlib import Path as _Path
+
+            directory = _Path(args.directory)
+            name = args.name or directory.name
+            workspace = FusionWorkspace(directory)
+            workspace.create(name=name)
+            workspace.save()
+            _print(f"created fusion workspace: {workspace.root}")
+            _print(f"author configuration in: {workspace.config_path.name}")
+            return EXIT_OK
+
+        if command == "add":
+            workspace = _load_workspace_or_exit(args.workspace)
+            kind = None if args.kind == "auto" else args.kind
+            for path in args.paths:
+                inp = workspace.add(path, kind=kind, copy=not args.link, module_id=args.module or "")
+                _print(
+                    f"added {inp.input_id}: {inp.workspace_path or inp.source} "
+                    f"({inp.kind}, detected: {inp.detected_type or '?'}, {inp.file_count} files)"
+                )
+            return EXIT_OK
+
+        if command == "remove":
+            workspace = _load_workspace_or_exit(args.workspace)
+            inp = workspace.get_input(args.input_id)
+            workspace.remove(args.input_id, delete_files=not args.keep_files)
+            _print(f"removed {args.input_id} ({inp.workspace_path or inp.source})")
+            return EXIT_OK
+
+        if command == "replace":
+            workspace = _load_workspace_or_exit(args.workspace)
+            old = workspace.replace(args.input_id, args.source)
+            _print(f"replaced {args.input_id} with {args.source} (now {old.file_count} files)")
+            return EXIT_OK
+
+        if command == "assign":
+            workspace = _load_workspace_or_exit(args.workspace)
+            workspace.assign(args.input_id, args.module_id)
+            _print(f"{args.input_id} assigned to module {args.module_id}")
+            return EXIT_OK
+
+        if command == "list":
+            workspace = _load_workspace_or_exit(args.workspace)
+            inventory = workspace.inventory()
+            if args.json:
+                _print(json.dumps(inventory, indent=2, ensure_ascii=False))
+                return EXIT_OK
+            _print(f"workspace: {workspace.root}")
+            _print(f"application: {inventory['config']['name']} v{inventory['config']['version']}")
+            _print(f"inputs: {len(workspace.inputs)}")
+            for inp in workspace.inputs:
+                _print("  " + _workspace_input_line(inp))
+            for problem in inventory["problems"]:
+                _print(f"problem: {problem}")
+            conflicts = workspace.conflicts()
+            for conflict in conflicts:
+                _print(f"{conflict['level']}: {conflict['message']}")
+            return EXIT_OK
+
+        if command == "config":
+            workspace = _load_workspace_or_exit(args.workspace)
+            if args.entry_point is not None:
+                workspace.config.entry_point = args.entry_point
+            if args.name is not None:
+                workspace.config.name = args.name
+            if args.version is not None:
+                workspace.config.version = args.version
+            if args.package_format is not None:
+                workspace.config.package_format = args.package_format
+            for pair in args.depend or []:
+                if "=" not in pair:
+                    _print(f"error: --depend expects 'consumer=provider', got {pair!r}")
+                    return EXIT_USAGE
+                consumer, provider = pair.split("=", 1)
+                deps = workspace.config.module_dependencies.setdefault(consumer.strip(), [])
+                if provider.strip() not in deps:
+                    deps.append(provider.strip())
+            for path in args.asset_dir or []:
+                if path not in workspace.config.asset_dirs:
+                    workspace.config.asset_dirs.append(path)
+            workspace.save()
+            if args.show or not any(
+                [args.entry_point, args.name, args.version, args.package_format, args.depend, args.asset_dir]
+            ):
+                _print(json.dumps(workspace.config.to_dict(), indent=2, ensure_ascii=False))
+            return EXIT_OK
+
+    except WorkspaceError as exc:
+        _print(f"error: {exc}")
+        return EXIT_ERROR
+    _print(f"error: unknown workspace command {command!r}")
+    return EXIT_USAGE
+
+
+def cmd_fuse(args) -> int:
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .fusion.compatibility import CompatibilityReport
+    from .fusion.modules import build_graph
+    from .fusion.orchestrator import FusionOrchestrator
+
+    command = args.fuse_command
+    workspace = _load_workspace_or_exit(args.workspace)
+
+    if command == "plan":
+        graph = build_graph(workspace)
+        _ = workspace.conflicts()
+        if args.json:
+            _print(_json.dumps(graph.as_dict(), indent=2, ensure_ascii=False))
+            return EXIT_OK
+        _print(f"application: {workspace.config.name} v{workspace.config.version}")
+        _print(f"modules: {len(graph.modules)}")
+        for module in graph.modules:
+            deps = ", ".join(module.dependencies) or "(none)"
+            _print(
+                f"  {module.module_id:20} {module.language:12} {module.adapter_id:12}"
+                f" {len(module.source_files):4} sources  deps: {deps}"
+            )
+        _print(f"build order: {' -> '.join(graph.order)}")
+        _print(f"entry point: {graph.entry_point or '(not decided)'}")
+        for conflict in graph.conflicts:
+            _print(f"conflict: {conflict}")
+        for cycle in graph.cycles:
+            _print(f"cycle: {' -> '.join(cycle)}")
+        return EXIT_OK
+
+    if command == "validate":
+        from .fusion.orchestrator import FusionOrchestrator as _Orchestrator
+
+        graph = build_graph(workspace)
+        orchestrator = _Orchestrator(workspace)
+        compat = orchestrator.validate_compatibility(graph)
+        if args.json:
+            _print(_json.dumps({"tools": compat.tools, "checks": compat.checks}, indent=2, ensure_ascii=False))
+            return EXIT_OK
+        for check in compat.checks:
+            _print(f"  {check['level']}: {check['message']}")
+        if not compat.checks:
+            _print("no compatibility findings (target architecture/OS are consistent)")
+        return EXIT_OK
+
+    if command == "build":
+        output = _Path(args.output) if getattr(args, "output", None) else None
+        orchestrator = FusionOrchestrator(
+            workspace, progress=lambda stage, detail: _print(f"[{stage}] {detail}")
+        )
+        result = orchestrator.run(package_format=args.format, output=output)
+        if args.json:
+            _print(_json.dumps(result.report, indent=2, ensure_ascii=False))
+        else:
+            for message in result.messages:
+                _print(message)
+            for task in result.report.get("tasks", []):
+                status = task["status"]
+                line = f"  {task['module_id']}: {status}"
+                if task.get("error"):
+                    line += f" - {task['error']}"
+                _print(line)
+            if result.package_path:
+                _print(f"package: {result.package_path}")
+            for finding in result.validation:
+                _print(f"validation: {finding}")
+        return EXIT_OK if result.ok else EXIT_ERROR
+    return EXIT_USAGE
+
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1520,6 +1795,8 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init,
         "history": cmd_history,
         "gui": cmd_gui,
+        "workspace": cmd_workspace,
+        "fuse": cmd_fuse,
     }
     handler = dispatch.get(args.command)
     if handler is None:
