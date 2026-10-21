@@ -62,7 +62,12 @@ validate the output. No fabricated integration; no fake toolchain runs.
 - **GUI**: "Tools → Fusion workspace (multi-language)" dialog: create/load,
   add files/folders, remove, refresh, plan (no build), build with package
   format choice; results and conflicts in a read-only detail box.
-- **Tests**: `tests/unit/test_fusion.py` - 40 tests; suite total 464 OK
+- **Tests**: `tests/unit/test_fusion.py` - 42 tests (workspace operations and
+  guarantees, module detection/dependencies/ordering/cycles/entry points,
+  bridge decisions, PE architecture checks, end-to-end Python fusion
+  including running the assembled application and launching the ECE package,
+  cache hit/invalidation, honest missing-toolchain failures, Unreal command
+  construction, the workspace/fuse CLI surface); suite total 466 OK
   (1 skipped), `tools/lint_stdlib.py` clean (95 files).
 - **Docs**: `docs/FUSION.md`.
 - **Launch** (late addition to the same session): `fuse launch <package.ece>`

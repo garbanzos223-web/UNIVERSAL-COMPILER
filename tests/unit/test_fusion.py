@@ -668,6 +668,52 @@ class CacheStateTests(TempCase):
         self.assertTrue(find_cache_hit("m", reloaded, "k"))
 
 
+class CliSurfaceTests(TempCase):
+    """The workspace/fuse CLI commands, driven through cli_main (real argv)."""
+
+    def test_workspace_create_add_list_config_and_fuse_plan(self) -> None:
+        from ece_autocompiler.cli import main as cli_main
+
+        lib = self.base / "supportlib"
+        lib.mkdir()
+        (lib / "__init__.py").write_text("v = 3\n", encoding="utf-8")
+        (lib / "pyproject.toml").write_text('[project]\nname = "supportlib"\n', encoding="utf-8")
+        app = self.base / "frontapp"
+        app.mkdir()
+        (app / "main.py").write_text(
+            "import supportlib\nif __name__ == '__main__':\n    print('v', supportlib.v)\n",
+            encoding="utf-8",
+        )
+        ws_dir = self.base / "cli-ws"
+
+        self.assertEqual(cli_main(["workspace", "create", str(ws_dir), "--name", "clisuite"]), 0)
+        self.assertEqual(cli_main(["workspace", "add", str(ws_dir), str(lib), str(app)]), 0)
+        self.assertEqual(
+            cli_main(["workspace", "config", str(ws_dir), "--entry-point", "frontapp"]), 0
+        )
+        # list over a reloaded workspace shows both inputs
+        self.assertEqual(cli_main(["workspace", "list", str(ws_dir)]), 0)
+        loaded = FusionWorkspace.load(ws_dir)
+        self.assertEqual(loaded.config.entry_point, "frontapp")
+        self.assertEqual(len(loaded.inputs), 2)
+        # plan must surface the dependency and not crash
+        self.assertEqual(cli_main(["fuse", "plan", str(ws_dir)]), 0)
+        # unknown subcommand is an argparse usage error (SystemExit)
+        with self.assertRaises(SystemExit):
+            cli_main(["workspace", "frobnicate", str(ws_dir)])
+
+    def test_fuse_validate_reports_toolchain_situation(self) -> None:
+        from ece_autocompiler.cli import main as cli_main
+
+        lib = self.base / "nativelib"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text("project(nl)\nadd_library(nl SHARED a.c)\n", encoding="utf-8")
+        ws_dir = self.base / "val-ws"
+        self.assertEqual(cli_main(["workspace", "create", str(ws_dir)]), 0)
+        cli_main(["workspace", "add", str(ws_dir), str(lib)])
+        self.assertEqual(cli_main(["fuse", "validate", str(ws_dir)]), 0)
+
+
 # ---------------------------------------------------------------------------
 # ece package hardening from the fusion side
 # ---------------------------------------------------------------------------
