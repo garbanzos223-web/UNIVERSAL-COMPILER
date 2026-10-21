@@ -6,6 +6,89 @@ memory.
 
 ---
 
+## Session: fusion engine (multi-file, multi-language project assembly)
+
+**Goal.** Transform the compiler into a fusion engine: import many inputs
+(C/C++, Python, Unreal, C#, JS/TS, Rust, Go, assets, prebuilt libraries) into
+one workspace, build a real module/dependency graph, compile each module with
+its own toolchain, connect modules through evidence-based integration
+mechanisms, assemble and package one application (ECE/ZIP/folder), and
+validate the output. No fabricated integration; no fake toolchain runs.
+
+### Completed
+
+- **Workspace** (`fusion/workspace.py`): create/load, add files/directories
+  (copy or `--link`), replace, remove, assign to modules; structure preserved
+  (no flattening); colliding folders are never overwritten - a colliding
+  import gets a suffixed folder and the path collision is reported (identical
+  → warning, different content → conflict, identical copies → info).
+- **Module graph** (`fusion/modules.py`): per-language dependency discovery
+  from real manifests - Python AST imports (stdlib filtered, third-party →
+  runtime requirements), CMake `add_subdirectory`/`target_link_libraries`,
+  Cargo path deps, `go.mod` replaces, `.csproj` ProjectReference/PackageReference,
+  npm `file:` deps + workspaces, `.uproject`/`Build.cs` - plus topological
+  order (deterministic), cycle detection with explanation, and explicit
+  entry-point handling (multiple candidates are a reported conflict, not a
+  silent choice; `entry_point` in `ece-project.json` wins).
+- **Bridges** (`fusion/bridges.py`): per-pair integration methods with
+  evidence: native-link, shared-library, c-abi, python-extension, engine-module,
+  editor-python, bundled, and the honest `process` fallback for pairs without
+  a compatible interface. Unreal↔Python roles are inferred as editor vs
+  external-app and are overridable via `python_roles`.
+- **Compatibility** (`fusion/compatibility.py`): real PE/ELF header reading
+  (x86/x64/arm64; used for prebuilt binaries and `.pyd` files), mixed-arch
+  conflict detection, Unreal engine association checks against installed
+  engines, Python runtime hints.
+- **Unreal** (`fusion/unreal.py`): constructs real UBT / RunUAT
+  BuildCookRun / UnrealEditor-Cmd pythonscript commands from a discovered
+  engine; `ready=False` + concrete reasons when the engine is absent; runs
+  with cancellation and timeout. Asset-processing scripts are build-time
+  only; editor scripts are never copied into the packaged game.
+- **Incremental builds** (`fusion/incremental.py`): cache key = SHA-256 over
+  source hashes + config + dependency keys; consumers invalidated when a
+  dependency rebuilds; failed builds drop their entry; hits require the key
+  match AND existing outputs. `fuse build --no-cache` bypasses.
+- **Repair** (`fusion/repair.py`): a failed module is run through the
+  existing RepairEngine (real diagnostics, minimal proposals, keep-only-if-
+  it-helped, rollback via backups), then rebuilt; `--repair-attempts N`.
+- **Orchestrator** (`fusion/orchestrator.py`): 9 stages (verify → graph →
+  bridges → compatibility → build → assets → assemble → package → validate),
+  per-module build logs, `report.json` with tasks/graph/bridges/cache/
+  repairs/validation, ECE package manifest extended additively
+  (`payload_type`, `entry_points`, `runtime_requirements`, `fusion_modules`,
+  `fusion_graph` unknown fields - the v1 binary layout is unchanged).
+- **CLI**: `workspace create|add|remove|replace|assign|list|config` and
+  `fuse plan|validate|build`.
+- **GUI**: "Tools → Fusion workspace (multi-language)" dialog: create/load,
+  add files/folders, remove, refresh, plan (no build), build with package
+  format choice; results and conflicts in a read-only detail box.
+- **Tests**: `tests/unit/test_fusion.py` - 37 tests; suite total 461 OK
+  (1 skipped), `tools/lint_stdlib.py` clean (95 files).
+- **Docs**: `docs/FUSION.md`.
+
+### Known limitations (honest list)
+
+- Missing toolchains fail their module task with an install hint; nothing
+  pretends to have built. On this dev host there is no cmake/dotnet/cargo/go
+  or Unreal Engine, so those paths are covered by construction + honest
+  failure tests, not by real runs.
+- Python↔C++ needs an exported shared library (ctypes) or a compiled CPython
+  extension; JS↔native needs a node-gyp addon; both are named as explicit
+  requirements instead of auto-"solved".
+- Python entry points are launched via a generated `run_application.py`
+  (modules on sys.path + `runpy`); native entry points stay with their
+  toolchain outputs; no renaming a zip into an ".exe" theatre.
+
+### Next
+
+- Wire asset import scripts into the Unreal cook pipeline (requires an
+  engine on the host for verification).
+- Propagate `test_commands` per module into the build pipeline.
+- GUI: allow editing `ece-project.json` fields (dependencies, roles) in the
+  dialog instead of the file itself.
+
+---
+
 ## Session: advanced features (packaging, repair, optimization)
 
 **Goal.** Extend the ECE Compiler with three subsystems on top of the 1.2

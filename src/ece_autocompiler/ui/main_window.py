@@ -486,6 +486,9 @@ class MainWindow(ttk.Frame):
 
         toolsm = tk.Menu(menubar, tearoff=0)
         toolsm.add_command(label="Inspect / Extract / Compare .ece...", command=self._show_container)
+        toolsm.add_separator()
+        toolsm.add_command(label="Fusion workspace (multi-language)...", command=self._show_fusion)
+        toolsm.add_separator()
         toolsm.add_command(label="Create distributable package...", command=self._show_package)
         toolsm.add_command(label="Toolchains...", command=self._show_toolchains)
         toolsm.add_command(label="Build history...", accelerator="Ctrl+H", command=self._show_history)
@@ -1232,6 +1235,9 @@ class MainWindow(ttk.Frame):
 
     def _show_container(self) -> None:
         ContainerDialog(self.ctx)
+
+    def _show_fusion(self) -> None:
+        FusionDialog(self.ctx)
 
     def _show_about(self) -> None:
         AboutDialog(self.ctx)
@@ -2710,6 +2716,267 @@ def _split_command(text: str) -> list[str]:
         else:
             cleaned.append(part)
     return cleaned
+
+
+class FusionDialog(_Dialog):
+    """Import many inputs, plan their module graph and build the fused app."""
+
+    PACKAGE_FORMATS = ("ece", "zip", "folder")
+
+    def __init__(self, ctx) -> None:
+        super().__init__(ctx, "Fusion workspace (multi-language)", width=880, height=600)
+        self.workspace = None
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(3, weight=1)
+
+        row = ttk.Frame(body)
+        row.grid(row=0, column=0, sticky="ew")
+        row.columnconfigure(0, weight=1)
+        self.path_var = tk.StringVar(value="")
+        ttk.Label(row, text="Workspace folder:").pack(side="left")
+        ttk.Entry(row, textvariable=self.path_var).pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(row, text="Browse...", command=self._browse_root).pack(side="left")
+
+        actions = ttk.Frame(body)
+        actions.grid(row=1, column=0, sticky="ew", pady=(8, 4))
+        ttk.Button(actions, text="Create", command=self._create).pack(side="left")
+        ttk.Button(actions, text="Load", command=self._load).pack(side="left", padx=6)
+        ttk.Button(actions, text="Add folder...", command=self._add_folder).pack(side="left", padx=6)
+        ttk.Button(actions, text="Add file...", command=self._add_file).pack(side="left")
+        ttk.Button(actions, text="Remove selected", command=self._remove).pack(side="left", padx=6)
+        ttk.Button(actions, text="Refresh", command=self._refresh).pack(side="left")
+
+        self.summary_var = tk.StringVar(value="Create or load a workspace folder first.")
+        ttk.Label(body, textvariable=self.summary_var).grid(row=2, column=0, sticky="w")
+
+        self.tree = make_tree(
+            body,
+            [("id", "Input", 100), ("kind", "Kind", 100), ("type", "Detected", 120),
+             ("files", "Files", 70), ("bytes", "Bytes", 100), ("path", "Path", 320)],
+            height=10,
+        )
+        self.tree.grid(row=3, column=0, sticky="nsew", pady=6)
+        with_scrollbar(body, self.tree).grid(row=3, column=1, sticky="ns")
+
+        build_row = ttk.Frame(body)
+        build_row.grid(row=4, column=0, sticky="ew")
+        ttk.Label(build_row, text="Package format:").pack(side="left")
+        self.format_var = tk.StringVar(value="ece")
+        ttk.Combobox(
+            build_row, textvariable=self.format_var, values=list(self.PACKAGE_FORMATS),
+            width=8, state="readonly",
+        ).pack(side="left", padx=6)
+        ttk.Button(build_row, text="Plan (no build)", command=self._plan).pack(side="left")
+        ttk.Button(build_row, text="Build fused application", command=self._build).pack(side="left", padx=8)
+
+        self.detail = _readonly_text(self, "", height=8)
+        self.detail.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+
+    # -- helpers ----------------------------------------------------------
+
+    def _set_text(self, box, content: str) -> None:
+        box.configure(state="normal")
+        box.delete("1.0", "end")
+        box.insert("1.0", content)
+        box.configure(state="disabled")
+
+    def _browse_root(self) -> None:
+        path = filedialog.askdirectory(title="Fusion workspace folder")
+        if path:
+            self.path_var.set(path)
+
+    def _create(self) -> None:
+        from ..fusion.workspace import FusionWorkspace, WorkspaceError
+
+        path = self.path_var.get().strip()
+        if not path:
+            messagebox.showwarning(APP_NAME, "Choose a folder for the new workspace.")
+            return
+        try:
+            ws = FusionWorkspace(Path(path))
+            ws.create(name=Path(path).name)
+            ws.save()
+        except WorkspaceError as exc:
+            messagebox.showerror(APP_NAME, str(exc))
+            return
+        self._load()
+
+    def _load(self) -> None:
+        from ..fusion.workspace import FusionWorkspace, WorkspaceError
+
+        path = self.path_var.get().strip()
+        if not path:
+            messagebox.showwarning(APP_NAME, "Choose a workspace folder first.")
+            return
+        try:
+            self.workspace = FusionWorkspace.load(Path(path))
+        except WorkspaceError as exc:
+            messagebox.showerror(APP_NAME, str(exc))
+            self.workspace = None
+            return
+        self._refresh(fill=True)
+
+    def _refresh(self, *, fill: bool = False) -> None:
+        self.tree.delete(*self.tree.get_children())
+        if self.workspace is None:
+            self.summary_var.set("No workspace loaded.")
+            return
+        if fill:
+            self.path_var.set(str(self.workspace.root))
+            self.format_var.set(self.workspace.config.package_format or "ece")
+        total_files = 0
+        for inp in self.workspace.inputs:
+            total_files += inp.file_count
+            self.tree.insert(
+                "", "end", values=(
+                    inp.input_id, inp.kind + (" (linked)" if inp.linked else ""),
+                    inp.detected_type or "?", inp.file_count, f"{inp.total_bytes:,}",
+                    inp.workspace_path or inp.source,
+                )
+            )
+        problems = self.workspace.verify()
+        conflicts = self.workspace.conflicts()
+        summary = (
+            f"{self.workspace.config.name} v{self.workspace.config.version}: "
+            f"{len(self.workspace.inputs)} inputs, {total_files} files"
+            + (f", {len(problems)} problem(s)" if problems else "")
+            + (f", {len(conflicts)} conflict(s)" if conflicts else "")
+        )
+        self.summary_var.set(summary)
+        details = list(problems) + [f"{c['level']}: {c['message']}" for c in conflicts]
+        self._set_text(self.detail, "\n".join(details))
+        self.ctx.status.set(summary)
+
+    def _add_folder(self) -> None:
+        if self.workspace is None:
+            messagebox.showwarning(APP_NAME, "Load a workspace first.")
+            return
+        path = filedialog.askdirectory(title="Folder to import")
+        if not path:
+            return
+        self._add_paths([path])
+
+    def _add_file(self) -> None:
+        if self.workspace is None:
+            messagebox.showwarning(APP_NAME, "Load a workspace first.")
+            return
+        names = filedialog.askopenfilenames(title="Files to import")
+        if not names:
+            return
+        self._add_paths(names)
+
+    def _add_paths(self, paths) -> None:
+        from ..fusion.workspace import WorkspaceError
+
+        errors: list[str] = []
+        added = 0
+        for path in paths:
+            try:
+                self.workspace.add(path)
+                added += 1
+            except WorkspaceError as exc:
+                errors.append(f"{Path(path).name}: {exc}")
+        self._refresh(fill=True)
+        if errors:
+            messagebox.showerror(APP_NAME, "\n".join(errors))
+        else:
+            self.ctx.status.set(f"Imported {added} input(s).")
+
+    def _remove(self) -> None:
+        if self.workspace is None:
+            return
+        selection = self.tree.selection()
+        if not selection:
+            return
+        for iid in selection:
+            values = self.tree.item(iid, "values")
+            input_id = values[0]
+            try:
+                self.workspace.remove(input_id)
+            except WorkspaceError as exc:
+                messagebox.showerror(APP_NAME, str(exc))
+                return
+        self._refresh(fill=True)
+
+    def _plan(self) -> None:
+        if self.workspace is None:
+            messagebox.showwarning(APP_NAME, "Load a workspace first.")
+            return
+
+        def work():
+            from ..fusion.modules import build_graph
+
+            graph = build_graph(self.workspace)
+            _ = self.workspace.conflicts()
+            lines = [f"application: {self.workspace.config.name} v{self.workspace.config.version}"]
+            lines.append("modules:")
+            for module in graph.modules:
+                deps = ", ".join(module.dependencies) or "(none)"
+                lines.append(
+                    f"  {module.module_id} — {module.language} ({module.adapter_id}),"
+                    f" {len(module.source_files)} sources, deps: {deps}"
+                )
+            lines.append(f"order: {' -> '.join(graph.order)}")
+            lines.append(f"entry point: {graph.entry_point or '(not decided)'}")
+            lines.extend(f"conflict: {c}" for c in graph.conflicts)
+            lines.extend(f"cycle: {' -> '.join(c)}" for c in graph.cycles)
+            return lines
+
+        def done(lines):
+            self._set_text(self.detail, "\n".join(lines))
+            self.summary_var.set("Plan finished; the build ran nothing.")
+            self.ctx.status.set("Fusion plan ready.")
+
+        def fail(error):
+            self.summary_var.set(f"Plan failed: {error}")
+
+        self.ctx.runner.run(work, done, fail)
+
+    def _build(self) -> None:
+        if self.workspace is None:
+            messagebox.showwarning(APP_NAME, "Load a workspace first.")
+            return
+        fmt = self.format_var.get()
+        self.summary_var.set("Building (this runs each module's real toolchain)...")
+        self.ctx.status.set("Fusion build running...")
+
+        def work():
+            from ..fusion.orchestrator import FusionOrchestrator
+
+            orchestrator = FusionOrchestrator(self.workspace)
+            return orchestrator.run(package_format=fmt)
+
+        def done(result):
+            lines = []
+            if result.ok:
+                lines.append("BUILD OK")
+            else:
+                lines.append("BUILD FAILED (details below; nothing was faked)")
+            for task in result.report.get("tasks", []):
+                status = "cached" if task.get("cached") else task["status"]
+                line = f"  {task['module_id']}: {status}"
+                if task.get("error"):
+                    line += f" - {task['error'][:200]}"
+                lines.append(line)
+            if result.package_path:
+                lines.append(f"package: {result.package_path}")
+            for finding in result.validation:
+                lines.append(f"validation: {finding}")
+            for message in result.messages:
+                lines.append(message)
+            self._set_text(self.detail, "\n".join(lines))
+            self.summary_var.set(
+                "Build finished." if result.ok else "Build failed; see the details below."
+            )
+            self.ctx.status.set("Fusion build finished.")
+
+        def fail(error):
+            self.summary_var.set(f"Build failed: {error}")
+
+        self.ctx.runner.run(work, done, fail)
 
 
 class AboutDialog(_Dialog):

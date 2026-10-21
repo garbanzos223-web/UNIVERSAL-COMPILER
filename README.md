@@ -121,6 +121,21 @@ documented in [docs/ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md):
   exactly. Flags are only applied to toolchains that understand them, and
   conflicting options are reported instead of being applied silently.
 
+### The fusion engine: many inputs, one application
+
+More recently, the **fusion engine** turned the compiler into a system for
+building one application from many multi-language inputs: import C/C++,
+Python, C#/.NET, JS/TS, Rust, Go, Java, PHP, Unreal Engine projects, raw
+game assets and prebuilt libraries into one workspace, let the engine build
+the real module/dependency graph (parsed from the manifests the projects
+already declare), compile each module with its own toolchain in dependency
+order, connect the modules through evidence-based mechanisms (shared
+libraries, C ABI, ctypes, engine modules, or an explicitly proposed separate
+process), and package the assembled application as an ECE container, ZIP or
+folder. Incremental builds, per-module repair with rollback and a full JSON
+build report are built in. Missing toolchains are reported, never faked.
+Details and the honest limits: [docs/FUSION.md](docs/FUSION.md).
+
 ---
 
 ## Features
