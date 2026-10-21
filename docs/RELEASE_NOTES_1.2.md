@@ -102,7 +102,7 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 - The release build was verified with `scripts\build_exe.ps1`: both binaries
   were rebuilt, the desktop build starts and stays alive, and the **console
   build really built a project, validated the container deeply and created a
-  ZIP package with its manifest** (`tools\release_check.py`).
+  real ZIP package with its manifest** (`tools\release_check.py`).
 - A real Python build was verified end to end: the first build took 1.266 s;
   the second used that estimate (1.625 s actual, 28% slower) and recorded it
   locally.
@@ -112,6 +112,17 @@ ece-autocompiler history [--search TEXT] [--ok|--failed] [--adapter ID] [--expor
 - The command line was measured on a project with 3000 files: the project
   scan went from 207 ms to 18 ms and the whole build from 808 ms to 388 ms,
   after caching the toolchain probe (`tools`: 1392 ms -> 173 ms).
+
+### Verified binaries (attach these to the release)
+
+| File | Size | SHA-256 |
+| --- | --- | --- |
+| `ECE-AutoCompiler.exe` (desktop) | 11 490 539 bytes (10.96 MB) | `0d2652d7e80e2ebc477a679f6b36712bf795bc9cbd92f9fd7e37035da932df7f` |
+| `ECE-AutoCompiler-cli.exe` (console) | 11 523 297 bytes (10.99 MB) | `b08e2091cc0749c3f445582800026d496762becea617a84da94c225204b12d99` |
+
+The same numbers are written to `dist\release.json` by
+`tools\release_check.py`; both binaries answer `--version` with
+`ECE Universal AutoCompiler 1.2`.
 
 ## Notes and limits
 
