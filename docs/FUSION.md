@@ -72,6 +72,7 @@ ece-autocompiler fuse plan <dir>          # modules, order, bridges, conflicts
 ece-autocompiler fuse validate <dir>      # compatibility report
 ece-autocompiler fuse build <dir> [--format ece|zip|folder] [--no-cache]
                                         [--repair-attempts N]
+ece-autocompiler fuse launch <app.ece> [--into DIR]
 ```
 
 Build result files live in `<workspace>/ece-generated/`: per-module build

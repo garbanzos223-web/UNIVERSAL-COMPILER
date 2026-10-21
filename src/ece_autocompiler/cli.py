@@ -430,6 +430,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--repair-attempts", type=int, default=0,
         help="When a module build fails, try the repair engine this many times (default: 0 = off).",
     )
+    p_fuse_launch = fuse_sub.add_parser(
+        "launch", help="Extract a fusion .ece package and start its entry point."
+    )
+    p_fuse_launch.add_argument("package", help="Fusion .ece package to launch.")
+    p_fuse_launch.add_argument("--into", help="Extraction directory (default: <package>-app next to it).")
 
     return parser
 
@@ -1712,6 +1717,8 @@ def cmd_fuse(args) -> int:
     from .fusion.orchestrator import FusionOrchestrator
 
     command = args.fuse_command
+    if command == "launch":
+        return _fuse_launch(args)
     workspace = _load_workspace_or_exit(args.workspace)
 
     if command == "plan":
@@ -1752,33 +1759,101 @@ def cmd_fuse(args) -> int:
         return EXIT_OK
 
     if command == "build":
-        output = _Path(args.output) if getattr(args, "output", None) else None
-        orchestrator = FusionOrchestrator(
-            workspace, progress=lambda stage, detail: _print(f"[{stage}] {detail}")
-        )
-        result = orchestrator.run(
-            package_format=args.format, output=output,
-            use_cache=not args.no_cache, repair_attempts=max(0, args.repair_attempts),
-        )
-        if args.json:
-            _print(_json.dumps(result.report, indent=2, ensure_ascii=False))
-        else:
-            for message in result.messages:
-                _print(message)
-            for task in result.report.get("tasks", []):
-                status = task["status"]
-                if task.get("cached"):
-                    status += " (cached)"
-                line = f"  {task['module_id']}: {status}"
-                if task.get("error"):
-                    line += f" - {task['error']}"
-                _print(line)
-            if result.package_path:
-                _print(f"package: {result.package_path}")
-            for finding in result.validation:
-                _print(f"validation: {finding}")
-        return EXIT_OK if result.ok else EXIT_ERROR
+        return _fuse_build(args)
     return EXIT_USAGE
+
+
+def _fuse_launch(args) -> int:
+    """Extract a fusion ECE package and start its entry point (§8)."""
+    import subprocess as _subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    from .container import ContainerReader
+    from .errors import EceError
+    from .extraction import Extractor
+
+    package = _Path(args.package)
+    if not package.exists():
+        _print(f"error: package does not exist: {package}")
+        return EXIT_ERROR
+    into = _Path(args.into) if getattr(args, "into", None) else package.with_name(package.stem + "-app")
+
+    try:
+        reader = ContainerReader(package)
+        reader.open()
+        try:
+            manifest = reader.manifest
+            payload_type = manifest.payload_type if manifest else ""
+            entry = manifest.entry_points[0].get("module", "") if manifest and manifest.entry_points else ""
+        finally:
+            reader.close()
+        if "fusion-application" not in payload_type:
+            _print(
+                f"error: not a fusion application package (payload_type={payload_type!r}); "
+                "use 'extract' for regular containers."
+            )
+            return EXIT_ERROR
+        report = Extractor().extract(package, into, overwrite=True)
+    except EceError as exc:
+        _print(f"error [{exc.code}]: {exc}")
+        return EXIT_ERROR
+
+    _print(f"extracted {report.files_written} files into {into}")
+    launcher = into / "run_application.py"
+    if launcher.exists():
+        _print(f"starting python entry point ({entry or 'application'})...")
+        proc = _subprocess.run([_sys.executable, str(launcher)])
+        return EXIT_OK if proc.returncode == 0 else EXIT_ERROR
+
+    exes = sorted(into.rglob("*.exe"))
+    if exes:
+        exe = exes[0]
+        _print(f"starting {exe.name} ({entry or 'application'})...")
+        _subprocess.Popen([str(exe)], cwd=str(exe.parent))
+        return EXIT_OK
+    _print(
+        "error: the package has no launchable entry point (no run_application.py "
+        "and no .exe); launch it with its own runtime instead."
+    )
+    return EXIT_ERROR
+
+
+def _fuse_build(args) -> int:
+    """Assemble, build and package the fused application (§6)."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .fusion.orchestrator import FusionOrchestrator
+
+    workspace = _load_workspace_or_exit(args.workspace)
+    output = _Path(args.output) if getattr(args, "output", None) else None
+    orchestrator = FusionOrchestrator(
+        workspace, progress=lambda stage, detail: _print(f"[{stage}] {detail}")
+    )
+    result = orchestrator.run(
+        package_format=args.format, output=output,
+        use_cache=not args.no_cache, repair_attempts=max(0, args.repair_attempts),
+    )
+    if args.json:
+        _print(_json.dumps(result.report, indent=2, ensure_ascii=False))
+    else:
+        for message in result.messages:
+            _print(message)
+        for task in result.report.get("tasks", []):
+            status = task["status"]
+            if task.get("cached"):
+                status += " (cached)"
+            line = f"  {task['module_id']}: {status}"
+            if task.get("error"):
+                line += f" - {task['error']}"
+            _print(line)
+        if result.package_path:
+            _print(f"package: {result.package_path}")
+        for finding in result.validation:
+            _print(f"validation: {finding}")
+    return EXIT_OK if result.ok else EXIT_ERROR
+
 
 
 

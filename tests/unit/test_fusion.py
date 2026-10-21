@@ -673,6 +673,42 @@ class CacheStateTests(TempCase):
 # ---------------------------------------------------------------------------
 
 
+class LaunchTests(TempCase):
+    def test_launch_extracts_and_runs_python_entry(self) -> None:
+        """A fused Python application can be launched from its .ece package.
+
+        This runs a real extraction plus a real launcher; 'fuse launch' is the
+        create-inspect-validate-extract-launch story of §8 end to end.
+        """
+        from ece_autocompiler.cli import main as cli_main
+
+        ws = self._orbit_ws()
+        result = FusionOrchestrator(ws).run(package_format="ece")
+        self.assertTrue(result.ok, result.messages)
+        package = result.package_path
+        into = self.base / "launch-target"
+        code = cli_main(["fuse", "launch", package, "--into", str(into)])
+        self.assertEqual(code, 0)
+        launcher = into / "run_application.py"
+        self.assertTrue(launcher.exists())
+
+    def _orbit_ws(self) -> FusionWorkspace:
+        lib = self.base / "support"
+        lib.mkdir()
+        (lib / "__init__.py").write_text("v = 21\n", encoding="utf-8")
+        (lib / "pyproject.toml").write_text('[project]\nname = "support"\n', encoding="utf-8")
+        app = self.base / "runner"
+        app.mkdir()
+        (app / "main.py").write_text(
+            "import support\n\nif __name__ == '__main__':\n    print('answer', support.v)\n",
+            encoding="utf-8",
+        )
+        ws = self.make_ws("orbit-launch")
+        ws.add(lib); ws.add(app)
+        ws.config.entry_point = "runner"
+        return ws
+
+
 class ManifestIntegrityTests(TempCase):
     def test_fusion_manifest_survives_a_rewrite(self) -> None:
         from ece_autocompiler.container import ContainerWriter, Manifest, PayloadItem

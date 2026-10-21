@@ -62,9 +62,15 @@ validate the output. No fabricated integration; no fake toolchain runs.
 - **GUI**: "Tools → Fusion workspace (multi-language)" dialog: create/load,
   add files/folders, remove, refresh, plan (no build), build with package
   format choice; results and conflicts in a read-only detail box.
-- **Tests**: `tests/unit/test_fusion.py` - 37 tests; suite total 461 OK
+- **Tests**: `tests/unit/test_fusion.py` - 40 tests; suite total 464 OK
   (1 skipped), `tools/lint_stdlib.py` clean (95 files).
 - **Docs**: `docs/FUSION.md`.
+- **Launch** (late addition to the same session): `fuse launch <package.ece>`
+  extracts a fusion ECE package with the standard path-traversal-safe
+  extractor and starts its entry point (generated `run_application.py` for
+  Python entry modules, otherwise the packaged `.exe`); refuses packages
+  whose `payload_type` is not `fusion-application`. Verified end to end on
+  the demo workspace.
 
 ### Known limitations (honest list)
 
@@ -78,6 +84,12 @@ validate the output. No fabricated integration; no fake toolchain runs.
 - Python entry points are launched via a generated `run_application.py`
   (modules on sys.path + `runpy`); native entry points stay with their
   toolchain outputs; no renaming a zip into an ".exe" theatre.
+
+### Package lifecycle
+
+`fuse build` (assemble + package + validate) and `fuse launch`
+(extract + start) close the create → inspect → validate → extract → launch
+story for fusion packages on top of the existing container tools.
 
 ### Next
 
