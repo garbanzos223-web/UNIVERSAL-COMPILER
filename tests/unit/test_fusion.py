@@ -535,6 +535,32 @@ class OrchestratorTests(TempCase):
         self.assertFalse(third_by_id["support"].get("cached"))
         self.assertFalse(third_by_id["runner"].get("cached"))
 
+    def test_module_tests_run_and_are_recorded(self) -> None:
+        ws = self._two_module_workspace()
+        ws.config.test_commands = {"runner": f"{sys.executable} -c \"print('t-ok')\""}
+        orchestrator = FusionOrchestrator(ws)
+        result = orchestrator.run(package_format="folder")
+        self.assertTrue(result.ok)
+        recorded = result.report["module_tests"]
+        self.assertIn("runner", recorded)
+        self.assertTrue(recorded["runner"]["ok"])
+        self.assertIn("t-ok", recorded["runner"]["summary"])
+
+    def test_asset_modules_are_staged_when_no_unreal(self) -> None:
+        music = self.base / "sfx"
+        music.mkdir()
+        (music / "boom.wav").write_bytes(b"RIFF")
+        app = self.base / "tiny"
+        app.mkdir()
+        (app / "main.py").write_text("if __name__ == '__main__':\n    print('ok')\n", encoding="utf-8")
+        ws = self.make_ws("withassets")
+        ws.add(app); ws.add(music)
+        ws.config.entry_point = "tiny"
+        result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+        staged = Path(result.assembly_dir) / "assets" / "sfx" / "boom.wav"
+        self.assertTrue(staged.exists(), result.report["assembly"])
+
     def test_report_records_the_full_pipeline(self) -> None:
         ws = self._two_module_workspace()
         result = FusionOrchestrator(ws).run(package_format="zip")

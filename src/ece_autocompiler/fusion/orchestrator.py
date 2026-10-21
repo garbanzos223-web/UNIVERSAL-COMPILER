@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,6 +152,7 @@ class FusionOrchestrator:
         module_tasks: dict[str, BuildTask] = {}
         graph.tasks = []
         module_repairs: dict[str, dict] = {}
+        module_tests: dict[str, dict] = {}
         cache = CacheState.load(self.workspace.root)
         cache_hits: set[str] = set()
         dep_keys: dict[str, str] = {}
@@ -175,6 +177,11 @@ class FusionOrchestrator:
                     task = self._build_module(graph, module)  # force rebuild after repairs
             module_tasks[module_id] = task
             graph.tasks.append(task)
+            if task.status == "built" and not task.cached:
+                test_cmd = self.workspace.config.test_commands.get(module_id, "")
+                if test_cmd:
+                    tests_ok, tests_summary = self._run_module_test(module, test_cmd)
+                    module_tests[module_id] = {"ok": tests_ok, "summary": tests_summary}
             if task.status == "built":
                 key = self._cache_key_for(module, dep_keys)
                 if key:
@@ -255,6 +262,7 @@ class FusionOrchestrator:
             },
             "cache_hits": sorted(cache_hits),
             "module_repairs": module_repairs,
+            "module_tests": module_tests,
             "assets": asset_notes,
             "assembly": assembly_notes,
             "planning_conflicts": conflicts_snapshot,
@@ -341,6 +349,7 @@ class FusionOrchestrator:
         cache_hits: set[str] | None = None,
     ) -> BuildTask:
         if module.language == "assets":
+            module.status = "built"
             return BuildTask(
                 task_id=f"module:{module.module_id}",
                 module_id=module.module_id,
@@ -469,6 +478,41 @@ class FusionOrchestrator:
         task.error = "" if ok else output.strip()[:800]
         module.status = "built" if ok else "failed"
         return task
+
+    def _run_module_test(self, module: Module, test_cmd: str) -> tuple[bool, str]:
+        """Run one module's configured test command; never hides a failure."""
+        from ..adapters.base import BuildPlanStep
+        from ..build.process import run_command
+        import shlex
+
+        raw_tokens = shlex.split(test_cmd, posix=False)
+        argv = [
+            token[1:-1]
+            if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}
+            else token
+            for token in raw_tokens
+        ]
+        if not argv:
+            return False, "empty test command"
+        if argv[0].lower() in {"python", "python3", "py"}:
+            argv[0] = sys.executable
+        step = BuildPlanStep(
+            id="module-test",
+            title=f"tests for {module.module_id}",
+            cmd_args=argv,
+            workdir=self._module_root(module),
+            timeout=600,
+            requires_approval=False,
+        )
+        try:
+            result = run_command([step], self._module_root(module), consent_granted=True)
+        except Exception as exc:
+            return False, f"test could not run: {exc}"
+        lines: list[str] = []
+        for executed in result.step_results:
+            lines.extend(executed.output_lines[-40:])
+        summary = ("exit=" + ("ok" if result.ok else "fail") + " " + "\n".join(lines))[-400:]
+        return bool(result.ok), summary
 
     def _module_root(self, module: Module) -> Path:
         inp = next(i for i in self.workspace.inputs if i.input_id == module.input_id)
@@ -609,9 +653,30 @@ class FusionOrchestrator:
                 )
 
         for module in graph.modules:
-            if module.status != "built" or module.language in {"assets", "unreal"}:
+            if module.status != "built":
                 continue
             root = self._module_root(module)
+            if module.language == "assets":
+                if unreal_modules:
+                    continue  # raw assets stay with Unreal's own import/cook
+                out_assets = assembly_dir / "assets" / module.module_id
+                out_assets.mkdir(parents=True, exist_ok=True)
+                copied = 0
+                for rel in module.source_files + module.asset_files:
+                    src = root / rel
+                    if not src.is_file():
+                        continue
+                    dst = out_assets / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        shutil.copy2(src, dst)
+                        copied += 1
+                    except OSError as exc:
+                        notes.append(f"{module.module_id}: asset copy failed for {rel}: {exc}")
+                notes.append(f"asset module {module.module_id}: staged {copied} files under assets/{module.module_id}")
+                continue
+            if module.language in {"assets", "unreal"}:
+                continue
             if module.language == "python":
                 target = assembly_dir if module.module_id == entry_id else assembly_dir / module.module_id
                 target.mkdir(parents=True, exist_ok=True)
