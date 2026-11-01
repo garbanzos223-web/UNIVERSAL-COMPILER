@@ -1,416 +1,365 @@
-<div align="center">
-
 # ECE Universal AutoCompiler
 
-**Windows-only build tool: detects a project's technology, runs its real build
-with the toolchain installed on your PC, packages the result into a secure,
-versioned `.ece` container — or exports the project to a standalone Windows
-`.exe`.**
+**One Windows desktop application (and CLI) to detect, build, package, analyse,
+decompile and rebuild software projects.**
 
-*From a desktop window or the command line — no third-party Python packages.*
-
-[What's new](#whats-new-in-12-new-visuals-and-useful-tools) · [Features](#features) · [Quick start](#quick-start) · [The `.exe`](#standalone-windows-app-exe) · [CLI](#command-line) · [Docs](#documentation) · [Honest by design](#honest-by-design)
+- Original mission: find a project's technology, run its real build with the
+  toolchain installed on your PC, and package the result as a versioned `.ece`
+  container or a standalone Windows `.exe`.
+- New in 1.3: an integrated **DECOMPILER** workspace — universal format
+  detection, modular decompilation backends, a reconstructed-project explorer,
+  a source editor, an ECE-aware extractor and a real recompilation pipeline —
+  inside the same window, with the same navigation and theme.
 
 <p align="center">
-  <img src="docs/img/screenshot.png" alt="Desktop window: project folder, detection badge, output mode, build log" width="820">
+  <img src="docs/img/screenshot.png" alt="Compiler workspace: project folder, detection badge, output mode and build log" width="820">
+  <br>
+  <sub>Compiler workspace. This capture is from release 1.2; the 1.3 window keeps
+  it and adds the DECOMPILER tab (no screenshot has been published for it yet).</sub>
 </p>
 
-</div>
-
 ---
 
-> **Status: 1.2, Windows 10/11 x64 only.** What runs **for real**:
-> Python and Node.js `.ece` builds, Python `.exe` export (PyInstaller), and —
-> when the toolchain is installed — native `.exe` builds for C#/.NET, Rust, Go
-> and C/C++. Everything else is *detected* and *reported* with an install hint;
-> nothing about a missing toolchain is ever faked.
+## Overview
 
----
+ECE Universal AutoCompiler is a standard-library Python application with a
+Tkinter desktop interface and a full command-line interface. It is honest by
+design: when a toolchain or a backend is missing, it says so and names the
+exact next step instead of pretending to succeed.
 
-## What's new in 1.2: New visuals and useful tools
+Two workspaces live in the same window:
 
-This is the current release. It is about telling you **what this tool can actually
-do on your PC** instead of letting you find out by failing:
-
-- **The real desktop window, in the README.** The screenshot at the top is an
-  actual capture of the shipped GUI: a dark, card-based window with a project
-  badge, output mode and a live colour-coded log.
-- **Export readiness before you try.** `analyze` (and the desktop **Detect**)
-  answers "can this become an `.exe` here?" per candidate, with the exact next
-  step when the answer is no: `analyze --json` carries a per-candidate
-  `exe_readiness` object.
-- **Failures in a fixed shape.** Build and `.exe` errors are reported as
-  *what happened / why / what to do* — in the CLI, in the window, and in the
-  build history — never as a single opaque line.
-- **Windows path-collision guard for `.ece`.** The writer refuses to create
-  paths Windows treats as the same file, the extractor refuses *before writing
-  any byte*, and the validator only warns. Existing containers stay readable.
-- **Verified release builds.** `scripts\build_exe.ps1` builds a frozen desktop
-  app and a frozen console app, then `tools\release_check.py` runs them for
-  real (`--version`, launch probe), recording size and SHA256 in
-  `dist\release.json`. A build that cannot run fails the script and is never
-  called a release.
-- **Troubleshooting that names the real paths.**
-  [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers antivirus/SmartScreen,
-  missing toolchains, and where logs and history actually live.
-
-### The 40 usability improvements are in this release
-
-The plan in [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md)
-is implemented in 1.2. The short version:
-
-- **You never guess what is missing.** `doctor`, `analyze`, `tools`, `.exe`
-  readiness and the window name every missing toolchain and show a copyable
-  install command (`winget` / `choco` / `scoop`) plus the official download URL.
-- **You see the plan first.** `plan`, `build --plan`, `exe --plan` and
-  **Preview plan** show the exact argv commands, working directory, consent and
-  skippable steps; nothing is executed while you read them.
-- **You can always get unstuck.** A first-run walkthrough, a **What do I do now?**
-  button, hover tooltips, a keyboard-shortcut list, project health warnings, and
-  the fixed *what happened / why / what to do* shape for every failure, with a
-  **Copy error** button.
-- **You can find and repeat your work.** Build history is searchable, filterable,
-  exportable to JSON/CSV and replayable as a copyable command; every output gets
-  a `.sha256` sidecar (`--no-integrity` opts out); `diff` compares two
-  containers file by file; `validate --integrity` checks both.
-- **You can start and package safely.** `init` creates Python, Node.js and C++
-  skeletons; `--package-only` skips the build; overwriting, closing during a
-  build and consent-requiring steps ask first; cancelling never leaves a partial
-  output; cancelled and failed builds are recorded honestly.
-- **Build time is estimated honestly.** Before a build, the CLI and the window
-  quote a range from this PC's own successful builds (or say there is no timing
-  history yet); during the build they show elapsed time and an ETA only when a
-  real progress fraction exists; afterwards the summary compares the real
-  duration with the estimate.
-- **You get a copyable summary.** Every build ends with duration, size, SHA-256,
-  what was built, what was skipped and what was **not** done (nothing is
-  installed, unverified claims are never made).
-- **Everything stays local.** Config, history, logs, sidecars and templates live
-  under `%LOCALAPPDATA%\ECE-Universal-AutoCompiler\`; no database, no account, no
-  network.
-- **The commands start fast.** Toolchain probing costs one process per tool,
-  so the result is cached locally for 15 minutes and dropped automatically when
-  `PATH` changes. `tools` went from ~1.4 s to ~0.2 s; `doctor` from ~1.4 s to
-  ~0.2 s. `tools --refresh` / `doctor --refresh` re-probe on demand. The
-  project scan itself was rewritten to do the work once per folder instead of
-  once per file: on a tree with 3000 files it went from 207 ms to 18 ms.
-
-### Beyond the 40: packaging, repair and optimization
-
-Three more subsystems are available on top of the 1.2 usability work. They are
-documented in [docs/ADVANCED_FEATURES.md](docs/ADVANCED_FEATURES.md):
-
-- **Advanced package generator.** `package` produces real, verified
-  distributables: ZIP and TAR.GZ archives (reproducible: two runs over the
-  same inputs are byte-identical), an application folder, a Windows installer
-  (Inno Setup or NSIS) and the Linux formats (DEB, AppImage) when their
-  tooling is installed. Every package carries a `package-manifest.json` with
-  the metadata, the file list and SHA-256 checksums, and it is **read back and
-  verified** before it is reported as successful. Missing runtime dependencies
-  and copyleft licenses are reported, never hidden.
-- **Automatic error analysis and repair.** `repair` parses the compiler output
-  (GCC/Clang, MSVC, Cargo, Go, Python, javac, TypeScript and linker errors),
-  groups the problems into root causes and applies the deterministic fixes it
-  is sure about: a missing `:`, a missing `#include`, an unused Go import, a
-  missing `using`/`import`. Every change is backed up, rebuilt, verified and
-  **rolled back** when it does not fix the error. The diff is always shown.
-- **Intelligent compilation optimizer.** `optimize` builds the project twice -
-  baseline and optimized - and compares duration, size and (with a benchmark
-  command) runtime. Profiles: `debug`, `release`, `performance`, `size`,
-  `balanced`, `custom`; the default `none` keeps the previous behaviour
-  exactly. Flags are only applied to toolchains that understand them, and
-  conflicting options are reported instead of being applied silently.
-
-### The fusion engine: many inputs, one application
-
-More recently, the **fusion engine** turned the compiler into a system for
-building one application from many multi-language inputs: import C/C++,
-Python, C#/.NET, JS/TS, Rust, Go, Java, PHP, Unreal Engine projects, raw
-game assets and prebuilt libraries into one workspace, let the engine build
-the real module/dependency graph (parsed from the manifests the projects
-already declare), compile each module with its own toolchain in dependency
-order, connect the modules through evidence-based mechanisms (shared
-libraries, C ABI, ctypes, engine modules, or an explicitly proposed separate
-process), and package the assembled application as an ECE container, ZIP or
-folder. Incremental builds, per-module repair with rollback and a full JSON
-build report are built in. Missing toolchains are reported, never faked.
-Details and the honest limits: [docs/FUSION.md](docs/FUSION.md).
-
----
-
-## Features
-
-- **Detects** a project's type from manifests, marker files, directory shape and
-  source extensions — Python, Node/TypeScript, .NET, Rust, Go, Java/Maven,
-  Java/Kotlin/Gradle, C/C++ (CMake/Make/Meson), PHP, Unity, Unreal.
-- **Plans** a build using argument lists (never a shell string), drawing on real
-  toolchain discovery on the machine.
-- **Runs** the build with timeouts, cancellation, output capture and secret
-  redaction. Steps that execute project-controlled code (for example
-  `npm install` or an npm build script) require **explicit consent**.
-- **Packages** the collected artifacts into an `.ece` container with a JSON
-  manifest, a per-file index, per-file SHA-256 hashes and a package content hash.
-- **Validates** and **safely extracts** containers (path-traversal, symlink and
-  depth checks; hashes verified before a file replaces its target).
-- **Diagnoses** build failures by classifying output into actionable categories.
-- **Reports readiness before you try**: `analyze` answers, per detected
-  project, whether *this* PC can produce an `.exe` and exactly what is missing.
-- **Ships verified builds**: `scripts\build_exe.ps1` runs each artifact it
-  produces — a build that cannot run is never called a release.
-
-## Quick start
-
-**Option A — portable `.exe` (no Python needed).** See
-[The `.exe`](#standalone-windows-app-exe) below, then open it, pick a folder and
-press **Compile**.
-
-**Option B — run from source.** Install it once in editable mode, so the
-command works from **any folder** (recommended):
-
-```powershell
-python -m pip install -e .
-python -m ece_autocompiler --version
-python -m ece_autocompiler gui        # open the desktop window
-```
-
-Or run it without installing, **only from the repository root** (`PYTHONPATH`
-set anywhere else fails with `No module named ece_autocompiler`):
-
-```powershell
-# From the repository root
-$env:PYTHONPATH = "$PWD\src"
-python -m ece_autocompiler gui
-```
-
-## Standalone Windows app (`.exe`)
-
-You do **not** need Python installed to *use* the tool. Build a single, portable
-executable once, then just open it, select a project folder and press
-**Compile**:
-
-```powershell
-# One-time: build the executables (needs pyinstaller)
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1                  # both builds, single file
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Layout onedir  # folder (faster start)
-powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Target cli     # console build only
-# -> dist\ECE-AutoCompiler.exe        desktop window (no console)
-# -> dist\ECE-AutoCompiler-cli.exe    the same CLI, from a terminal
-```
-
-Double-click `dist\ECE-AutoCompiler.exe` to launch the desktop window. The
-`.exe` bundles the Python interpreter and the app; nothing else to install.
-
-The console build is the product's command line, frozen: 
-
-```powershell
-dist\ECE-AutoCompiler-cli.exe --version
-dist\ECE-AutoCompiler-cli.exe analyze C:\path\to\project
-dist\ECE-AutoCompiler-cli.exe exe C:\path\to\project -o C:\out\app.exe
-```
-
-Every build is verified before it is called a release: `tools\release_check.py`
-runs the console build (`--version`) and starts the desktop build to confirm it
-stays alive, then reports size and SHA256 for each artifact in
-`dist\release.json`. A build that cannot run fails the script.
-
-> The build is reproducible via `scripts\build_exe.ps1` (PyInstaller). The
-> generated `.exe` files are build artifacts and are **not** committed to the
-> repository (see `.gitignore`).
-
-## Desktop window
-
-```powershell
-python -m ece_autocompiler gui
-```
-
-A single window with a dark theme, laid out as cards:
-
-* **Header** — app name, version chip, and quick buttons for **Toolchains** and
-  **Inspect / Extract `.ece`**.
-* **Project** — pick the folder (type auto-detected; the result appears as a
-  badge) with a **Rescan** button.
-* **Output** — choose **Package as `.ece`** or **Build `.exe`** (detects the
-  language); the output path and options adapt to the mode. The **Compile**
-  button is the prominent one; **Cancel** and **Open output folder** sit next
-  to it.
-* **Log** — colour-coded build output.
-
-Options per mode — `.ece`: compression, skip install, optimization profile.
-`.exe`: single file or folder layout, console window. Shared: allow project
-scripts (consent), overwrite output, package only.
-
-Menus: **File** (open output/work folder), **Build** (choose project,
-preview plan, optimize and compare), **Tools** (Inspect / Extract `.ece`,
-create distributable package, toolchains, build history), **Help** (About).
-
-## Command line
-
-```powershell
-python -m ece_autocompiler analyze  path\to\project
-python -m ece_autocompiler build    path\to\project -o out\project.ece --consent
-python -m ece_autocompiler exe      path\to\project -o out\app.exe --name app
-python -m ece_autocompiler package  path\to\project --output-dir out --format zip
-python -m ece_autocompiler optimize path\to\project --profile release
-python -m ece_autocompiler repair   path\to\project --apply
-python -m ece_autocompiler validate out\project.ece --deep
-python -m ece_autocompiler validate out\project.ece --verify-signature
-python -m ece_autocompiler inspect  out\project.ece
-python -m ece_autocompiler extract  out\project.ece out\unpacked --overwrite
-python -m ece_autocompiler tools
-```
-
-`build` refuses to run project scripts unless `--consent` is passed.
-
-## Turn code into an `.exe`
-
-The `exe` command **scans your project, detects the language, and compiles it
-with that language's own toolchain** into a Windows executable:
-
-```powershell
-python -m ece_autocompiler exe path\to\project -o out\app.exe --name app
-```
-
-| Detected language | How the `.exe` is made |
+| Tab | What it does |
 | --- | --- |
-| **Python** | PyInstaller bundles the entry point + interpreter into one `.exe` (**verified**). |
-| **C# / .NET** | `dotnet publish -c Release -r win-x64 --self-contained`. |
-| **Rust** | `cargo build --release` → `target/release/*.exe`. |
-| **Go** | `go build -o app.exe`. |
-| **C/C++ (CMake/Make)** | CMake/Make build → locates the produced `.exe`. |
-| Node.js / Unity / Unreal | Detected and reported; these need a bundler or their engine (not faked). |
+| **COMPILER** | Detect a project, preview the plan, run its real build, package `.ece` / `.exe`, inspect containers, package distributables, repair failed builds, compare optimized builds and fuse multi-language workspaces. |
+| **DECOMPILER** | Import files by button or drag-and-drop, identify their format, analyse them safely, decompile with the available backend, explore the reconstructed project, edit recovered source, export it and recompile it with a real toolchain. |
 
-If the required compiler is missing, the tool **says so** with an install hint
-instead of pretending to build. Options: `--entry`, `--onedir`, `--console`,
-`--name`, `--timeout`. See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md).
+Nothing imported into the decompiler is executed. Analysis and decompilation
+read bytes and metadata only.
 
-Some toolchains run commands that come from the project (a CMake configure runs
-the project's `CMakeLists.txt`, Cargo runs `build.rs`, MSBuild runs the
-project's targets). Those steps need **consent**: pass `--consent` on the
-command line, or tick **Allow project scripts** in the window. Nothing runs
-without it.
+## Current version
 
-### `.exe` layout: `onefile` vs `onedir`
+**1.3.0** — application release. The `.ece` container format remains
+**version 1** and is unchanged by this release.
 
-The Python exporter and the app builder (`scripts\build_exe.ps1 -Layout ...`)
-offer both layouts; the GUI exposes them as *Single file* / *Folder*:
+## Verified technology stack
 
-| | onefile (single file) | onedir (folder) |
-| --- | --- | --- |
-| What you ship | One `.exe` | A folder with the `.exe` + its DLLs |
-| Startup | Slower (unpacks to a temp dir first) | Fast |
-| Antivirus false positives | More common | Less common |
-| Command | `exe ... ` (default) | `exe ... --onedir` |
+- **Language:** Python 3.10+ (verified on CPython 3.12).
+- **GUI:** Tkinter/ttk from the standard library, custom dark theme.
+- **Runtime dependencies:** none. The base application uses the standard
+  library only.
+- **Optional decompiler extras:** `pefile` (richer PE resources/version info)
+  and `capstone` (disassembly), installed with `pip install -e .[decompile]`.
+- **Optional external tools (never bundled):** ILSpy `ilspycmd` for C#,
+  `javap` for Java listings, and the compilers used by recompilation
+  (`dotnet`, `javac`, `mvn`, `gradle`, `python`, `cmake`, `make`, `go`,
+  `cargo`, `npm`).
+- **Packaging:** PyInstaller for the Windows `.exe`.
+- **Tests:** `unittest` (unit, integration and GUI smoke).
 
-**Recommendation:** `onedir` for distribution (faster, fewer AV false
-positives), `onefile` for convenience. Both produce a **Windows x64**
-executable that runs without Python installed. Note that C#/.NET also honours
-the choice (`PublishSingleFile`), while Rust, Go and C/C++ toolchains already
-produce a single `.exe`, so the folder layout does not apply to them.
+## Installation
 
-## Tests
+### From source (recommended for development)
+
+```powershell
+git clone https://github.com/garbanzos223-web/UNIVERSAL-COMPILER.git
+cd UNIVERSAL-COMPILER
+python -m pip install -e .
+# optional but recommended for the decompiler:
+python -m pip install -e ".[decompile]"
+```
+
+Run the desktop application:
+
+```powershell
+python -m ece_autocompiler gui
+# or: ece-autocompiler gui
+# or: python launcher_gui.py
+```
+
+Run the CLI:
+
+```powershell
+python -m ece_autocompiler --version
+python -m ece_autocompiler formats
+```
+
+### Prebuilt executable
+
+Release builds are produced by [`scripts\build_exe.ps1`](scripts/build_exe.ps1)
+and verified by [`tools\release_check.py`](tools/release_check.py). The
+generated files are:
+
+- `dist\ECE-AutoCompiler.exe` — desktop application (no console window)
+- `dist\ECE-AutoCompiler-cli.exe` — console/CLI build
+
+`dist` is a build artifact and is not committed; download a release asset or
+build it yourself.
+
+## System requirements
+
+- Windows 10 or Windows 11, x64 (the GUI and the built executables are
+  Windows-only; the Python package itself can be imported elsewhere).
+- Python 3.10 or newer when running from source.
+- Free disk space for the projects you build and for recovered projects.
+- The toolchains required by the project you want to build or recompile. The
+  application detects them and reports what is missing.
+
+## Usage guide
+
+### Compiler workspace (existing functionality)
+
+1. Choose a project folder.
+2. Press **Rescan**; the detected technology, evidence and `.exe` readiness are
+   reported in the log.
+3. Choose **Package as .ece** or **Build .exe**, set the output path and options.
+4. Optionally preview the exact plan (**Preview plan**) before running anything.
+5. Press **Compile**. Long work runs on a background thread; the log, progress
+   and status bar report real milestones.
+
+Other compiler features are available from the menus: container inspection and
+extraction, distributable packaging, the fusion workspace, toolchain discovery,
+build history, automatic repair, optimization comparison and the environment
+doctor.
+
+### Decompiler workspace (new in 1.3)
+
+1. Open the **DECOMPILER** tab (or `Ctrl+2`).
+2. Add files/folders, or drag them from Explorer onto the window.
+3. The format is identified automatically; press **Analyze** for a full report.
+4. Press **Decompile**. A reconstructed project is written to a new folder and
+   shown in the **Project** and **Resources** tabs.
+5. Double-click a recovered text file to edit it in the integrated editor. Save,
+   Save As, search, compare with the recovered original and automatic backups
+   are available.
+6. **Export project...** writes the reconstructed project to the folder you
+   choose.
+7. **Recompile project** builds a new binary from the recovered source with the
+   real toolchain, then verifies that the artifact exists.
+
+The CLI exposes the same workflows:
+
+```powershell
+# identify and analyse without writing a project
+python -m ece_autocompiler decompile C:\path\app.exe --analyze-only
+
+# reconstruct a project
+python -m ece_autocompiler decompile C:\path\lib.dll -o C:\work\lib-recovered
+
+# show the recompilation commands and run nothing
+python -m ece_autocompiler recompile C:\work\lib-recovered --plan
+
+# rebuild and verify
+python -m ece_autocompiler recompile C:\work\lib-recovered -o C:\work\rebuilt
+
+# list supported formats
+python -m ece_autocompiler formats
+```
+
+## Supported formats
+
+Full detail: [docs/SUPPORTED_FORMATS.md](docs/SUPPORTED_FORMATS.md).
+
+| Input | Identification | Analysis | Source recovery | Recompilation |
+| --- | --- | --- | --- | --- |
+| Windows PE `.exe` / `.dll` | PE header, machine, subsystem | Sections, imports, exports, resources*, strings, PDB, signature presence, disassembly** | **Not possible** (native source is gone); pseudocode is not invented | No (analysis only) |
+| .NET assembly (PE + CLR) | CLR data directory, ECMA-335 metadata | Types, methods, runtime metadata, resources | **C# via ILSpy** when `ilspycmd` is installed; otherwise a generated class outline | Yes, with the .NET SDK, from decompiled source |
+| Java `.class` | `CAFEBABE`, class-file version | Constant pool, fields, methods, descriptors, source-file attribute | Named class outline; `javap` listings when a JDK exists | Yes when real `.java` sources exist and a JDK is installed |
+| Java `.jar` / `.war` | ZIP + `.class` entries | Archive index, class models, `javap` listings | Class outlines + resources; Java sources are extracted unchanged if present | Yes when the archive ships real sources (Maven/Gradle/javac plan) |
+| Python `.pyc` | CPython magic, version | Imports, names, signatures, complete `dis` listing | Structural module outline (bodies omitted, clearly marked) | Only from real `.py` sources; outlines are refused |
+| PyInstaller application | `MEI` CArchive cookie | Embedded archive TOC | CArchive + PYZ extracted; frozen modules reconstructed as outlines and bytecode listings | Only if real sources are recovered |
+| ECE `.ece` | `ECE` magic, format v1 | Manifest, index, verified extraction | Payload extracted by the application's own hardened extractor; sources recovered when present | Yes when the container holds real sources |
+| ZIP / TAR / GZIP / BZIP2 / XZ | Magic bytes | Safe listing | Extracted with path/size limits | Only when real sources are present |
+| C, C++, C#, Java, Python, Go, Rust, JS/TS, PHP source | Extension + content | Structure/encoding | Used as-is | Yes when the toolchain and build files exist |
+| 7z / RAR and other unknown formats | Signature/extension | Identification only | No bundled extractor | No |
+
+\* Resources need `pefile`; ** disassembly needs Capstone or `objdump`.
+
+**Universal format detection** is based on magic bytes first (PE, ELF, CLR,
+`CAFEBABE`, pyc magic, `MEI`, `ECE`, ZIP, TAR, gzip, bzip2, xz), with the file
+extension only as a last hint. Every analysis records a SHA-256 digest and lists
+the operations that are actually available.
+
+## Compilation workflow
+
+```
+detect project → rank candidates → toolchain check → plan (dry run available)
+    → consent for project scripts → run real build → collect artifacts
+    → write .ece / .exe → validate → record history + SHA-256 sidecar
+```
+
+Missing toolchains stop the plan with an install hint; a missing tool is never
+reported as a successful build.
+
+## Decompilation workflow
+
+```
+import → detect format → bounded analysis → select backend
+    → write reconstructed project (source / outline / disassembly / resources)
+    → project explorer + editor → export
+```
+
+Every recovered file carries a status:
+
+- **recovered source** — real source file recovered unchanged or decompiled
+  into compilable source;
+- **partial reconstruction** — source-like output missing original parts;
+- **generated** — an outline, pseudocode or disassembly generated from
+  metadata, never claimed to be the original source;
+- **extracted resource** — binary/data extracted unchanged;
+- **unsupported** — identified but not recoverable by this build.
+
+## Recompilation workflow
+
+```
+recovered project → detect project kind → verify sources and toolchain
+    → plan (exact argv) → consent when project scripts run
+    → execute → verify artifact exists → report size, path, log
+```
+
+Recompilation creates a **new** binary. Original signatures, AssemblyInfo,
+compiler options and binary layout are not preserved, and native C/C++ binaries
+cannot be restored to their original source at all. Full detail and supported
+kinds: [docs/RECOMPILER.md](docs/RECOMPILER.md).
+
+## Application architecture
+
+```
+ui (Tkinter) ── cli (argparse)
+   │                │
+   └──── decompiler ├────── build ────── packaging
+         │          │         │              │
+         │          │         ├── detection  ├── repair
+         │          │         ├── adapters   └── optimize
+         │          │         └── container / extraction
+         │          └── decompiler backends:
+         │              dotnet, java, python, native PE, ELF, ECE, archive
+         └── TaskRunner (worker threads; results marshalled to Tk)
+```
+
+- `src/ece_autocompiler/decompiler/` — format detection, bounded readers
+  (`pe`, `elf`, `dotnet_metadata`, `java_class`, `python_bytecode`,
+  `pyinstaller`, `archive`), backends, service, recompiler.
+- `src/ece_autocompiler/ui/decompiler_panel.py` — the integrated tab.
+- `src/ece_autocompiler/ui/editor.py` — syntax-highlighted multi-tab editor.
+- `src/ece_autocompiler/ui/dnd.py` — native Windows file drops.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full package map.
+
+## Project structure
+
+```
+src/ece_autocompiler/     application package
+  adapters/               per-language build adapters
+  build/                  process runner and build orchestrator
+  container/              .ece format writer/reader/validator
+  decompiler/             analysis, backends, service, recompiler
+  detection/              project and toolchain detection
+  extraction/             hardened .ece extractor
+  packaging/              distributable formats
+  repair/, optimize/      repair and optimization engines
+  ui/                     Tkinter interface
+tests/unit|integration|smoke/
+docs/                     user and developer documentation
+scripts/                  build and lint scripts
+tools/                    release verification and stdlib lint
+```
+
+## Build instructions
+
+```powershell
+# onefile desktop + console builds, then real launch/CLI verification
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1
+
+# a faster-start folder layout
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Layout onedir
+
+# only one target
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Target gui
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1 -Target cli
+```
+
+The script installs PyInstaller only if it is absent, builds from
+`launcher_gui.py` / `launcher_cli.py`, then runs `tools\release_check.py`. A
+bundle that cannot start fails the script and is never called a release.
+`dist\release.json` records the size and SHA-256 of each artifact.
+
+## Testing instructions
 
 ```powershell
 python run_tests.py            # unit + integration + GUI smoke
 python run_tests.py unit
-python run_tests.py integration -v
-python run_tests.py smoke      # GUI only; skips without a display
+python run_tests.py integration
+python run_tests.py smoke
+powershell -File scripts\lint.ps1
 ```
 
-Integration tests create throwaway projects and run **real** Python and Node
-builds (Node tests skip automatically when Node is absent).
+The integration tests perform real builds and skip only when the required
+toolchain is absent. The decompiler tests build their fixtures with the standard
+library (a real `.pyc`, a valid class file, ELF/CArchive/PYZ structures, an
+`.ece` container) and never execute an imported binary. See
+[docs/TESTING.md](docs/TESTING.md).
 
-## Supported projects
+## Compatibility and limitations
 
-See [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md) for the full matrix
-of detection, which builds actually run, and which adapters are detection-only
-when a toolchain is missing.
+- GUI and release executables target Windows 10/11 x64.
+- The `.ece` format is unchanged at version 1; older containers remain readable.
+- Native PE/ELF binaries cannot be decompiled to original source. The tool
+  reports real imports, exports, sections, symbols, strings, resources and
+  disassembly, and does not fabricate C/C++ code.
+- Java source recovery without a dedicated Java decompiler is a named outline,
+  not original source.
+- Python 3.12 bytecode is reconstructed structurally, not as exact source.
+  Cross-version `.pyc` files are identified and their instruction listing is
+  reported only when the running interpreter can read them.
+- Generated outlines are marked **not recompilable**; the recompiler refuses
+  them rather than producing a binary that is not the original application.
+- Recompiled binaries are new builds and are not byte-identical to the input.
+- No unbundled external tool is downloaded automatically. ILSpy installation is
+  an explicit, consented action in the UI.
 
-## Troubleshooting
+## Security
 
-Most problems are one of these three, and each has a short answer:
+- Imported files are **never executed**; readers are bounded and fail safely.
+- `.ece` extraction reuses the existing hardened extractor: path traversal,
+  Windows path collisions, symlinks, depth and size limits are rejected before
+  writing.
+- Archives are extracted with path/size checks; absolute paths and `..` entries
+  are skipped.
+- Build and recompilation commands are argv lists with `shell=False`, a timeout
+  and cancellation; project-defined scripts require explicit consent.
+- Analysis records SHA-256 digests. Hashes are integrity checks, not signatures.
+- Optional tools run with your privileges. Review the displayed command before
+  consenting.
 
-| Symptom | Cause and fix |
-| --- | --- |
-| Antivirus flags or deletes a freshly built `.exe` | False positive on a self-extracting build: use `-Layout onedir`, exclude only the build folder, then report it to the vendor. |
-| "Cannot build a `<language>` .exe: missing `<tool>`" | A real toolchain is not installed. `analyze <folder>` says what this PC can build; nothing is ever faked. |
-| Extraction refused, or "file already exists" | The tool never overwrites silently: pass `--overwrite`, or the container's names collide on Windows. |
-
-Full guide, with the real paths for logs and history:
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
-
-## Requirements
-
-- **Windows 10/11 x64** — the only supported platform.
-- **To run from source:** Python 3.10–3.12 (development only). The built
-  `.exe` bundles the interpreter, so end users do **not** need Python.
-- **No third-party Python packages.** The standard library only. The GUI uses
-  Tkinter, which ships with CPython on Windows.
-- Toolchains are optional and only needed for the languages you actually build
-  (e.g. Node.js + npm for Node projects, PyInstaller for `.exe` export).
-
-## Honest by design
-
-- If a compiler or SDK is missing, the build **fails with the reason**; the tool
-  never reports success it did not achieve.
-- An adapter for a missing tool is **detection-only** in that environment. Its
-  requirement report says `ready = false` with an install hint.
-- `.ece` is a **documented container, not a self-executing format**. Hashes
-  detect corruption; they are **not** a publisher signature. A publisher may
-  add an optional external signature (minisign/cosign/gpg) that is checked
-  only with `validate --verify-signature` / `extract --verify-signature`; a
-  missing tool or key is a warning, never a fake "verified". See
-  [docs/ECE_FORMAT.md](docs/ECE_FORMAT.md) and [docs/SECURITY.md](docs/SECURITY.md).
-
-## Project layout
-
-```
-src/ece_autocompiler/
-  container/     .ece spec, codec, writer, reader, validator, diff, integrity
-  extraction/    safe extractor
-  detection/     markers, toolchain discovery and project detection
-  adapters/      build adapter interface + Python/Node + tool-gated adapters
-  build/         subprocess runner + orchestrator + history + timing estimates
-  packaging/     advanced package generator (formats, manifest, verification)
-  repair/        compiler diagnostic parsing + automatic repair engine
-  optimize/      optimization profiles, plan changes and measurements
-  diagnostics/   build-output classification + environment doctor
-  usability/     shared guidance, health, history search, plan, summary, wizard
-  security/      filename/path helpers for the UI and CLI
-  ui/            Tkinter desktop interface
-  templates.py   project skeletons used by `init`
-  local_store.py atomic local config/history/log storage
-  toolchain_hints.py / toolchain_versions.py   install commands + minimum versions
-examples/        runnable sample projects (Python, Node)
-docs/            architecture, format, security, supported projects, troubleshooting, dev guide
-tests/           unit, integration and GUI smoke tests (unittest)
-scripts/         build_exe.ps1 (release build) + lint.ps1
-tools/           lint_stdlib.py (stdlib-only lint) + release_check.py (verifies a build)
-```
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit.
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md) — how the components fit together.
-- [ECE format](docs/ECE_FORMAT.md) — the `.ece` container specification.
-- [Security](docs/SECURITY.md) — threat model, limits and consent model.
-- [Supported projects](docs/SUPPORTED_PROJECTS.md) — detection/build matrix.
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — antivirus/SmartScreen, missing
-  toolchains, log and history paths, container errors.
-- [Development](docs/DEVELOPMENT.md) — setup, tests, building the `.exe`.
-- [Release notes 1.2](docs/RELEASE_NOTES_1.2.md) — what changed in this release,
-  ready to paste into a GitHub release.
-- [Release notes 0.1.0](docs/RELEASE_NOTES_v0.1.0.md) — the original alpha notes.
-- [New visuals and useful tools](docs/NEW_VISUALS_AND_USEFUL_TOOLS.md) – the 40
-  usability improvements shipped in release 1.2.
-- [Advanced features](docs/ADVANCED_FEATURES.md) – the package generator, the
-  automatic repair engine and the compilation optimizer.
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md) (please report vulnerabilities privately).
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md). The two
+non-negotiable rules are: never fake a build/decompilation result, and keep the
+base runtime standard-library only.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Release 1.3.0 adds the integrated decompiler,
+the source editor, the recompiler and the universal format analysis.
 
 ## License
 
-[MIT](LICENSE) — free to use, modify and redistribute.
+MIT — see [LICENSE](LICENSE).
+
+## Links
+
+- Repository: <https://github.com/garbanzos223-web/UNIVERSAL-COMPILER>
+- Issues: <https://github.com/garbanzos223-web/UNIVERSAL-COMPILER/issues>
+- Documentation index: [docs/](docs/)
+  - [Installation](docs/INSTALL.md)
+  - [Supported formats](docs/SUPPORTED_FORMATS.md)
+  - [Decompiler](docs/DECOMPILER.md)
+  - [Recompiler](docs/RECOMPILER.md)
+  - [Architecture](docs/ARCHITECTURE.md)
+  - [Development](docs/DEVELOPMENT.md)
+  - [Testing](docs/TESTING.md)
+  - [Troubleshooting](docs/TROUBLESHOOTING.md)
+  - [ECE format](docs/ECE_FORMAT.md)

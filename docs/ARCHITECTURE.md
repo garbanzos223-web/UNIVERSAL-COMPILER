@@ -34,7 +34,8 @@ into small, single-responsibility packages. Data flows in one direction:
 | `local_store` | Atomic local config/history storage under `%LOCALAPPDATA%`; no database. |
 | `toolchain_hints` / `toolchain_versions` | Copyable install commands (winget/choco/scoop/URL) and minimum supported versions. |
 | `security` | Filename sanitizing and path-containment helpers for front ends. |
-| `ui` | Tkinter interface: `theme`, `widgets` (task runner, console, tables), `main_window` (panels and all dialogs). |
+| `ui` | Tkinter interface: `theme`, `widgets` (task runner, console, tables), `main_window` (compiler panels and dialogs), `decompiler_panel` (DECOMPILER tab), `editor` (source editor), `dnd` (Explorer drops). |
+| `decompiler` | Universal format detection, bounded readers, modular backends, batch service, reconstructed-project model and the recompiler. See the section below. |
 | `cli` / `app` | Argument parsing and sub-command dispatch (`analyze`, `plan`, `build`, `exe`, `doctor`, `init`, `diff`, `history`, `validate`, `inspect`, `extract`, `tools`, `gui`). |
 
 ## Key design decisions
@@ -113,3 +114,44 @@ ran (`optimize/measure.py`).
 - **Add an optimization profile**: add an `OptimizationProfile` in
   `optimize/profiles.py` and, when the toolchain family is new, an applier in
   `optimize/plan.py` that rewrites the build plan steps.
+- **Add a decompilation backend**: implement `Backend` in
+  `decompiler/backends/` (id, label, kinds, `decompile`), register it in
+  `decompiler/backends/__init__.py`, add the format kind and operations in
+  `decompiler/formats.py`, and add the recompilation plan in
+  `decompiler/recompiler.py` if the output is buildable.
+
+## Decompiler subsystem (1.3)
+
+```
+import ──> formats.detect_format ──> analyzer.analyze_file ──> service
+                                                           │
+                        ┌──────────────────────────────────┘
+                        ▼
+        backends: dotnet | java | python | native PE | ELF | ece | archive
+                        │
+                        ▼
+        reconstructed project + recovered-project.json
+                        │
+        editor / explorer / export        recompiler (plan → run → verify)
+```
+
+- **Readers are separate from backends.** `pe`, `elf`, `dotnet_metadata`,
+  `java_class`, `python_bytecode`, `pyinstaller` and `archive` are bounded,
+  read-only modules with no UI or subprocess dependency. This keeps analysis
+  safe and unit-testable.
+- **Backends only write files.** They receive a `BackendContext` whose
+  `write_text`/`write_bytes`/`copy_file` helpers create `RecoveredFile` records
+  with category, status and provenance. The UI never guesses a status.
+- **The service aggregates.** `DecompileSession` namespaces multiple inputs,
+  merges results, computes `project_kind` and `recompile_ready`, and writes the
+  manifest used by the recompiler gate.
+- **The recompiler is a planner + the existing process runner.** It never
+  computes results itself: `build.process.run_command` executes argv lists with
+  timeout, cancellation, consent and logging; the recompiler only verifies the
+  artifacts on disk.
+- **Optional tools stay outside the runtime dependency.** ILSpy/`javap`/
+  `objdump` are discovered, never assumed; `pefile`/Capstone are optional
+  extras and their absence is reported.
+- **Tk safety is unchanged.** The decompiler panel uses the same `TaskRunner`;
+  workers never touch widgets. A worker that needs UI state takes a copy before
+  starting (for example the `build_exe` flag).

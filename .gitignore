@@ -1,44 +1,89 @@
-# Byte-compiled / optimized / DLL files
+# ---------------------------------------------------------------------------
+# Byte-compiled / native build artifacts
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+*.pyd
+*.dll
+*.dylib
 
-# Distribution / packaging  (anchored to the repo root so they do NOT shadow
-# source packages such as src/ece_autocompiler/build/)
+# ---------------------------------------------------------------------------
+# Distribution / packaging (anchored: do NOT shadow src packages such as
+# src/ece_autocompiler/build/)
+# ---------------------------------------------------------------------------
 /build/
 /dist/
 *.egg-info/
 *.egg
 .eggs/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 
+# ---------------------------------------------------------------------------
 # Virtual environments
+# ---------------------------------------------------------------------------
 .venv/
 venv/
 env/
 ENV/
+.python-version
 
+# ---------------------------------------------------------------------------
 # Test / coverage / type-check caches
+# ---------------------------------------------------------------------------
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
+.benchmarks/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .tox/
 .nox/
 
+# ---------------------------------------------------------------------------
 # Editors / IDEs
+# ---------------------------------------------------------------------------
 .idea/
 .vscode/
 *.swp
 *.swo
+*.sublime-workspace
 
+# ---------------------------------------------------------------------------
 # OS cruft
+# ---------------------------------------------------------------------------
 Thumbs.db
 Desktop.ini
 .DS_Store
+._*
 
-# Build products of this tool
+# ---------------------------------------------------------------------------
+# Build products of this tool (containers, archives, logs, recovered projects)
+# ---------------------------------------------------------------------------
 *.ece
 out/
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# ---------------------------------------------------------------------------
+# Local secrets and machine-specific configuration (never commit these)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+credentials.json
+secrets.json
+local.settings.json

@@ -1,0 +1,63 @@
+# Normalise text files on checkout; Git stores LF in the repository.
+* text=auto
+
+# Source and documentation: LF on every platform (matches .editorconfig).
+*.py        text eol=lf diff=python
+*.pyi       text eol=lf diff=python
+*.md        text eol=lf diff=markdown
+*.txt       text eol=lf
+*.toml      text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.spec      text eol=lf
+*.ps1       text eol=crlf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+.editorconfig text eol=lf
+.gitignore    text eol=lf
+.gitattributes text eol=lf
+LICENSE       text eol=lf
+
+# Binary formats: never diff, convert or merge as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.bmp       binary
+*.pdf       binary
+*.exe       binary
+*.dll       binary
+*.pyd       binary
+*.so        binary
+*.dylib     binary
+*.lib       binary
+*.a         binary
+*.obj       binary
+*.o         binary
+*.class     binary
+*.jar       binary
+*.war       binary
+*.pyc       binary
+*.pyo       binary
+*.pyz       binary
+*.ece       binary
+*.zip       binary
+*.tar       binary
+*.gz        binary
+*.tgz       binary
+*.bz2       binary
+*.xz        binary
+*.7z        binary
+*.rar       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+
+# Large generated binaries are build artifacts and are not committed.
+# Git LFS is intentionally not configured: the repository tracks source,
+# documentation and small fixtures, not release executables.

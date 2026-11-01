@@ -7,13 +7,15 @@ By contributing you agree that your contributions are licensed under the
 
 ## Ground rules
 
-- **Never fake a build result.** If a tool is missing, report it. Do not add an
-  adapter that claims success without running a real command.
-- **Runtime code uses the standard library only.** Discuss before adding a
-  dependency.
+- **Never fake a build or decompilation result.** If a tool or backend is
+  missing, report it. Do not add a backend that claims to recover source it does
+  not have, and do not mark generated outlines as recompilable.
+- **Runtime code uses the standard library only.** Optional decompiler extras
+  (`pefile`, `capstone`) must stay optional and degrade honestly.
 - **Everything in English** — code, comments, docs, commit messages.
 - **No shell strings.** Commands are argv lists.
 - **Project-controlled scripts require consent.**
+- **Imported files are never executed** by the decompiler.
 
 ## Workflow
 
@@ -21,7 +23,8 @@ By contributing you agree that your contributions are licensed under the
 2. Make focused changes with tests.
 3. Run the suite: `python run_tests.py`.
 4. Update docs when behaviour or support changes (see
-   [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md) and
+   [docs/SUPPORTED_PROJECTS.md](docs/SUPPORTED_PROJECTS.md),
+   [docs/SUPPORTED_FORMATS.md](docs/SUPPORTED_FORMATS.md) and
    [docs/ECE_FORMAT.md](docs/ECE_FORMAT.md)).
 5. Open a pull request describing *what* changed and *how you verified it*.
 
@@ -51,6 +54,5 @@ output, and `python -m ece_autocompiler tools`. For security issues, follow
 
 ## License
 
-The license has not been chosen yet. By contributing, you agree that your
-contribution may be distributed under whatever license the project owner later
-selects.
+The project is licensed under the [MIT License](LICENSE). By contributing you
+agree that your contributions are licensed under the same terms.

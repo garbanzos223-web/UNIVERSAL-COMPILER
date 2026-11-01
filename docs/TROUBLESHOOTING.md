@@ -387,6 +387,56 @@ profile. The report shows the measured percentage; nothing is estimated.
 
 ---
 
+## Decompiler problems
+
+### "No decompilation backend for ..." 
+The file was identified, but this build has no backend for that format. Read the
+analysis pane: it lists the supported operations. Common cases are 7z/RAR
+archives, unknown binaries and native binaries (which are analysed, not
+decompiled to source).
+
+### .NET: "ILSpy is not installed"
+Install it from the DECOMPILER tab with **Prepare .NET decompiler** (it runs
+`dotnet tool install ilspycmd --version 9.1.0.7988 --tool-path <app data>`), or
+point `ECE_ILSPYCMD` at an existing `ilspycmd.exe`. Without ILSpy you still get
+metadata and a generated outline; the outline is not recompilable.
+
+### .NET: "CS8335 RefSafetyRules" or "netcoreapp8.0 is not a valid TFM"
+Those were ILSpy outputs fixed by the backend in 1.3.0. If you used an older
+project, decompile again; the normalisation is logged as
+`ILSpy project fix: ...`.
+
+### Java: "javap was not found"
+A JRE is not enough; install a JDK and make sure `JAVA_HOME\bin` or `javap` is
+on PATH. The class model and outline are still produced without it.
+
+### Python: "targets CPython X, but this build runs CPython Y"
+Cross-version bytecode is identified, but the instruction listing is only
+produced when the running interpreter's `marshal` format matches. Use the
+matching Python version for full analysis.
+
+### Recompile is refused: "not recompilable"
+The recovered project contains generated outlines or partial output. The
+manifest (`recovered-project.json`) says `recompile_ready: false`. Install the
+backend that produces real source (for example ILSpy for .NET) and decompile
+again, or supply real sources.
+
+### Recompile builds but "no new artifact was found"
+The command exited 0 but the expected output is missing. Check the log path in
+the report, the `--plan` commands and the project's own build configuration.
+The tool does not report success without an artifact on disk.
+
+### Drag and drop does nothing
+Explorer drops are a Windows feature; the Select File / Select Folder buttons
+always work. On locked-down sessions the native drop target may be unavailable;
+the status bar still accepts imports through the buttons.
+
+### Editor: "Syntax check is only available for Python and JSON here"
+That is accurate: no generic syntax checker is bundled. Compile the project with
+the real toolchain to validate other languages.
+
+---
+
 ## Reporting a problem
 
 Include, if you can:

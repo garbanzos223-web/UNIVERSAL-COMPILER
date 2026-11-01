@@ -134,3 +134,26 @@ depends on no external tool. Verification never runs project code.
   defences still apply to signed containers.
 - It does not make a container trusted by itself — the publisher's key still
   has to reach you through a channel you trust.
+
+## Decompiler inputs (1.3)
+
+Imported files are treated as hostile:
+
+- **Nothing is executed.** The PE, ELF, .NET metadata, Java class, pyc,
+  CArchive/PYZ and archive readers parse bytes with explicit bounds.
+- **File-size caps:** PE/ELF 512 MiB, class 64 MiB, pyc 256 MiB, CArchive
+  2 GiB; entry/total caps on archives and PYZ extraction.
+- **No unbounded allocation** from declared lengths: every slice is checked
+  against the real file/archive length before reading.
+- **Paths:** archive and container extraction rejects absolute paths and `..`,
+  skips symlinks, and the `.ece` extractor also rejects Windows duplicate-path
+  collisions before writing.
+- **No dynamic code loading:** Java classes and .NET assemblies are parsed as
+  data; they are not loaded into a runtime. Compiled native code is never run.
+- **External tools** (ILSpy, `javap`, disassemblers) receive a file path as an
+  argv element; they are not invoked through a shell. ILSpy installation is an
+  explicit, consented `dotnet tool install`.
+
+Recompilation executes build tools and, after consent, project-defined scripts.
+Those commands run with your privileges by design; review the displayed plan.
+

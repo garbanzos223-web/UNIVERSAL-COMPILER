@@ -126,3 +126,50 @@ required to contribute:
 python -m ruff check src tests
 python -m mypy src
 ```
+
+## Decompiler development
+
+The decompiler is split so that readers and backends can be tested without a
+display or an external tool:
+
+```
+formats.py          detection only (magic bytes + headers)
+analyzer.py         bounded, read-only analysis
+pe.py / elf.py / dotnet_metadata.py / java_class.py /
+python_bytecode.py / pyinstaller.py / archive.py    readers
+backends/           one module per family; writes RecoveredFile records
+service.py          batch session, namespacing, manifest
+recompiler.py       plan + run_command + artifact verification
+ui/decompiler_panel.py, ui/editor.py, ui/dnd.py     the tab
+```
+
+### Adding a backend
+
+1. Pick/implement a format kind in `decompiler/formats.py` and list its real
+   operations.
+2. Create `decompiler/backends/<name>.py` with a `Backend` subclass
+   (`id`, `label`, `kinds`, `decompile`).
+3. Write files through `BackendContext.write_text/write_bytes/copy_file`; every
+   file needs a `category`, a `status` and a `provenance` sentence.
+4. Set `output.recompile_ready = True` only when the output is complete,
+   compilable source. Add a plan in `decompiler/recompiler.py` for that project
+   kind.
+5. Register it in `decompiler/backends/__init__.py`.
+6. Add tests with a self-built fixture (see `tests/unit/test_decompiler.py`).
+   Never execute an imported binary in a test.
+
+### UI rules
+
+- Long work runs through `TaskRunner.run`; never call Tk from the worker.
+- Read Tk variables **before** starting the worker and pass copies.
+- Enable a button only when the operation can run (backend present, project
+  ready, no busy task).
+- Report the real result; do not show a success dialog without a verified
+  artifact.
+
+### Optional tools
+
+- `pefile` and `capstone` are optional extras; import them inside a `try`.
+- ILSpy/`javap`/`objdump` are discovered with `shutil.which` and explicit paths.
+- ILSpy installation is a consented action; never install anything silently.
+
