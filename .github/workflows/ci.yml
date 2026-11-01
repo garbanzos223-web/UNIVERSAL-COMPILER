@@ -44,7 +44,21 @@ jobs:
         run: python -m ece_autocompiler formats
 
       - name: Unit tests (includes decompiler/recompiler/core)
-        run: python run_tests.py unit
+        run: |
+          python run_tests.py unit 2>&1 | Tee-Object -FilePath unit-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Report failing unit tests as annotations
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path unit-tests.log) {
+            $fails = Select-String -Path unit-tests.log -Pattern '^(FAIL|ERROR):'
+            foreach ($f in $fails) {
+              Write-Output "::error title=Unit test failure::$($f.Line)"
+            }
+            Get-Content unit-tests.log -Tail 60
+          }
 
       # Integration tests run real builds. They skip themselves robustly when
       # a toolchain is missing, so the job stays green on any runner image;
