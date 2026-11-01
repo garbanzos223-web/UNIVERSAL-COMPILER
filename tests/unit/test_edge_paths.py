@@ -111,7 +111,7 @@ class ResolveDestinationEdgeTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_unicode_space_destination(self) -> None:
-        root = self.tmp / "proyecto ñandú ✨"
+        root = (self.tmp / "proyecto ñandú ✨").resolve()
         root.mkdir()
         target = resolve_destination(root, "sub carpeta/ fichero final.txt")
         self.assertEqual(target.parent, root / "sub carpeta")

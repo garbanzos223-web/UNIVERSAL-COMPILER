@@ -53,9 +53,13 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path unit-tests.log) {
-            $fails = Select-String -Path unit-tests.log -Pattern '^(FAIL|ERROR):'
-            foreach ($f in $fails) {
-              Write-Output "::error title=Unit test failure::$($f.Line)"
+            $lines = Get-Content unit-tests.log
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '^(FAIL|ERROR):') {
+                $end = [Math]::Min($i + 14, $lines.Count - 1)
+                $snippet = ($lines[$i..$end] -join ' ') -replace '\s+', ' '
+                Write-Output "::error title=$($lines[$i])::$snippet"
+              }
             }
             Get-Content unit-tests.log -Tail 60
           }

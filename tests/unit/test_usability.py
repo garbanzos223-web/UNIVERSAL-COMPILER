@@ -102,6 +102,8 @@ class PlanPreviewTests(unittest.TestCase):
         self.assertIn("steps", data)
 
     def test_missing_toolchain_is_a_blocker_not_a_fake_success(self) -> None:
+        import shutil
+
         project = self.tmp / "rustapp"
         project.mkdir()
         (project / "Cargo.toml").write_text(
@@ -111,9 +113,11 @@ class PlanPreviewTests(unittest.TestCase):
         (project / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
         preview = preview_plan(project)
         if preview.adapter_id:
-            # Without cargo the plan must say so instead of pretending.
-            self.assertFalse(preview.ready)
-            self.assertTrue(preview.blockers)
+            # The plan must agree with the host: ready only when cargo exists,
+            # with a blocker when it does not (never a fake success).
+            cargo = shutil.which("cargo")
+            self.assertEqual(preview.ready, bool(cargo))
+            self.assertEqual(bool(preview.blockers), not bool(cargo))
 
     def test_exe_plan_uses_pyinstaller_commands(self) -> None:
         project = self.tmp / "exeapp"

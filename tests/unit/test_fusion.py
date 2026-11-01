@@ -189,7 +189,7 @@ class WorkspaceTests(TempCase):
         ws = self.make_ws("link")
         inp = ws.add(src, copy=False)
         self.assertTrue(inp.linked)
-        self.assertEqual(inp.workspace_path, str(src))
+        self.assertEqual(Path(inp.workspace_path).resolve(), src.resolve())
 
     def test_workspace_inside_own_inputs_is_rejected(self) -> None:
         ws = self.make_ws("selfish")

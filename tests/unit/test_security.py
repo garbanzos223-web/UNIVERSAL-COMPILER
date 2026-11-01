@@ -49,9 +49,10 @@ class EntryPathTests(unittest.TestCase):
             normalize_entry_path(".")
 
     def test_resolve_destination_stays_inside(self) -> None:
-        root = Path(tempfile.mkdtemp())
+        root = Path(tempfile.mkdtemp()).resolve()
         target = resolve_destination(root, "a/b/c.txt")
         self.assertTrue(str(target).startswith(str(root)))
+        self.assertTrue(ensure_within(root, target))
 
     def test_check_depth(self) -> None:
         check_depth("a/b/c", max_depth=5)
