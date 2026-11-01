@@ -1,0 +1,29 @@
+name: Update release notes
+
+# One-off maintenance workflow: set the body of an existing release to a
+# documentation file. Triggered by pushing this file (the 1.4.0 release was
+# published with the wrong historical notes); afterwards it stays as a manual
+# tool via workflow_dispatch.
+on:
+  push:
+    paths:
+      - .github/workflows/fix-release-notes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set release body from docs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: "1.4.0"
+        run: |
+          gh release edit "$TAG" \
+            --title "ECE Universal AutoCompiler $TAG" \
+            --notes-file docs/RELEASE_NOTES_1.4.md

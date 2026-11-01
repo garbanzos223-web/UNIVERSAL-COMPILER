@@ -63,10 +63,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          $notesFile = Get-ChildItem docs\RELEASE_NOTES_*.md | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if ($notesFile) {
+          $version = $env:TAG.TrimStart('v')
+          $notesFile = "docs\RELEASE_NOTES_$version.md"
+          if (-not (Test-Path $notesFile)) {
+            $short = (($version -split '\.')[0..1] -join '.')
+            $notesFile = "docs\RELEASE_NOTES_$short.md"
+          }
+          if (-not (Test-Path $notesFile)) {
+            $notesFile = (Get-ChildItem docs\RELEASE_NOTES_*.md | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          }
+          if ($notesFile -and (Test-Path $notesFile)) {
             gh release create $env:TAG dist\ECE-AutoCompiler.exe dist\ECE-AutoCompiler-cli.exe dist\release.json `
-              --title "ECE Universal AutoCompiler $env:TAG" --notes-file $notesFile.FullName
+              --title "ECE Universal AutoCompiler $env:TAG" --notes-file $notesFile
           } else {
             gh release create $env:TAG dist\ECE-AutoCompiler.exe dist\ECE-AutoCompiler-cli.exe dist\release.json `
               --title "ECE Universal AutoCompiler $env:TAG" --generate-notes
