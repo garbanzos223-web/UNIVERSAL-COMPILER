@@ -5,9 +5,16 @@ name: Update release notes
 # published with the wrong historical notes); afterwards it stays as a manual
 # tool via workflow_dispatch.
 on:
-  push:
-    paths:
-      - .github/workflows/fix-release-notes.yml
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to update"
+        required: true
+        default: "1.4.0"
+      notes:
+        description: "Documentation file with the new body"
+        required: true
+        default: "docs/RELEASE_NOTES_1.4.md"
 
 permissions:
   contents: write
@@ -22,8 +29,9 @@ jobs:
       - name: Set release body from docs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: "1.4.0"
+          TAG: ${{ inputs.tag }}
+          NOTES: ${{ inputs.notes }}
         run: |
           gh release edit "$TAG" \
             --title "ECE Universal AutoCompiler $TAG" \
-            --notes-file docs/RELEASE_NOTES_1.4.md
+            --notes-file "$NOTES"
