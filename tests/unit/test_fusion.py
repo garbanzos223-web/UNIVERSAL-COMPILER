@@ -160,6 +160,28 @@ class WorkspaceTests(TempCase):
         self.assertFalse(workspace_path.exists())
         self.assertEqual([i for i in ws.inputs if i.input_id == inp.input_id], [])
 
+    def test_symbolic_links_are_never_followed_or_copied(self) -> None:
+        import os
+
+        secret = self.base / "secret.txt"
+        secret.write_text("do not package me\n", encoding="utf-8")
+        project = self.base / "linkedproj"
+        project.mkdir()
+        (project / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        link = project / "leak.txt"
+        try:
+            os.symlink(secret, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("this Windows session cannot create symbolic links")
+        ws = self.make_ws("symlink")
+        inp = ws.add(project)
+        copied = ws.input_location(inp)
+        self.assertFalse((copied / "leak.txt").exists())
+        self.assertTrue(any("symbolic link" in n for n in inp.notes), inp.notes)
+        graph = build_graph(ws)
+        module = next(m for m in graph.modules if m.module_id == "linkedproj")
+        self.assertNotIn("leak.txt", module.source_files)
+
     def test_linked_input_is_referenced_in_place(self) -> None:
         src = self.base / "linked"
         src.mkdir()
@@ -578,6 +600,320 @@ class OrchestratorTests(TempCase):
         cancel.set()
         result = FusionOrchestrator(ws, cancel=cancel).run(package_format="folder")
         self.assertIn("Build cancelled by user.", " ".join(result.messages))
+        self.assertFalse(result.ok)
+        by_id = {t["module_id"]: t for t in result.report["tasks"]}
+        self.assertEqual(by_id["runner"]["status"], "skipped")
+        self.assertIn("cancelled", by_id["runner"]["error"])
+
+    # -- scheduling, failure propagation and artifact verification -------
+
+    def _stub_orchestrator(self, ws, statuses=None):
+        """An orchestrator whose module builds are deterministic stubs.
+
+        This exercises the scheduler itself (ordering, parallelism, failure
+        propagation) without pretending that a real compiler ran.
+        """
+        import threading
+        import time
+
+        from ece_autocompiler.fusion.models import BuildTask as FusionBuildTask
+
+        statuses = statuses or {}
+
+        class StubOrchestrator(FusionOrchestrator):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.active = 0
+                self.peak = 0
+                self.lock = threading.Lock()
+                self.started: list[str] = []
+                self.finished: list[str] = []
+
+            def _build_module(self, graph, module, *, cache=None, cache_key=""):
+                with self.lock:
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                    self.started.append(module.module_id)
+                time.sleep(0.2)
+                status = statuses.get(module.module_id, "built")
+                with self.lock:
+                    self.active -= 1
+                    self.finished.append(module.module_id)
+                module.status = status
+                return FusionBuildTask(
+                    task_id=f"module:{module.module_id}",
+                    module_id=module.module_id,
+                    status=status,
+                    error="" if status == "built" else "stub build failure",
+                )
+
+        return StubOrchestrator(ws)
+
+    def test_independent_modules_build_concurrently(self) -> None:
+        ws = self._two_module_workspace()
+        # Break the import dependency so both modules are independent.
+        ws.config.module_dependencies = {"runner": []}
+        runner_input = next(i for i in ws.inputs if i.workspace_path.endswith("runner"))
+        runner_input.detected_type = "python"
+        (ws.input_location(runner_input) / "main.py").write_text(
+            "if __name__ == '__main__':\n    print('independent')\n", encoding="utf-8"
+        )
+        ws.save()
+        orchestrator = self._stub_orchestrator(ws)
+        result = orchestrator.run(package_format="folder", max_parallel=2)
+        self.assertTrue(result.ok, result.messages)
+        self.assertEqual(orchestrator.peak, 2, orchestrator.started)
+        self.assertEqual(result.report["parallel_jobs"], 2)
+        # Both modules were built exactly once.
+        self.assertEqual(sorted(orchestrator.started), sorted(orchestrator.finished))
+
+    def test_dependencies_build_before_their_consumers(self) -> None:
+        ws = self._two_module_workspace()
+        orchestrator = self._stub_orchestrator(ws)
+        result = orchestrator.run(package_format="folder", max_parallel=4)
+        self.assertTrue(result.ok, result.messages)
+        self.assertEqual(orchestrator.peak, 1)
+        self.assertLess(
+            orchestrator.finished.index("support"),
+            orchestrator.started.index("runner"),
+        )
+
+    def test_failed_dependency_skips_consumers_instead_of_building_them(self) -> None:
+        ws = self._two_module_workspace()
+        orchestrator = self._stub_orchestrator(ws, statuses={"support": "failed"})
+        result = orchestrator.run(package_format="folder", max_parallel=2)
+        self.assertFalse(result.ok)
+        by_id = {t["module_id"]: t for t in result.report["tasks"]}
+        self.assertEqual(by_id["support"]["status"], "failed")
+        self.assertEqual(by_id["runner"]["status"], "skipped")
+        self.assertIn("support", by_id["runner"]["error"])
+        self.assertNotIn("runner", orchestrator.started)
+
+    def test_repair_path_is_wired_and_recorded(self) -> None:
+        from unittest import mock
+
+        from ece_autocompiler.fusion import orchestrator as orchestrator_module
+        from ece_autocompiler.fusion.repair import ModuleRepairResult
+        from ece_autocompiler.repair.engine import RepairOutcome
+
+        lib = self.base / "native"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text(
+            "project(nat)\nadd_library(nat SHARED a.c)\n", encoding="utf-8"
+        )
+        ws = self.make_ws("repairwire")
+        ws.add(lib)
+        outcome = RepairOutcome()
+        outcome.message = "no deterministic fix"
+        stub = ModuleRepairResult(module_id="native", outcome=outcome, repaired=False)
+        with mock.patch.object(
+            orchestrator_module, "repair_module", return_value=stub
+        ) as patched:
+            result = FusionOrchestrator(ws).run(package_format="folder", repair_attempts=1)
+        self.assertTrue(patched.called, "repair_attempts must reach the repair engine")
+        self.assertIn("native", result.report["module_repairs"])
+        self.assertFalse(result.report["module_repairs"]["native"]["repaired"])
+        self.assertFalse(result.ok)
+
+    def test_missing_declared_artifact_is_not_reported_as_success(self) -> None:
+        lib = self.base / "native"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text(
+            "project(nat)\nadd_library(nat SHARED a.c)\n", encoding="utf-8"
+        )
+        ws = self.make_ws("artifactgap")
+        ws.add(lib)
+        orchestrator = self._stub_orchestrator(ws)
+        result = orchestrator.run(package_format="folder")
+        task = next(t for t in result.report["tasks"] if t["module_id"] == "native")
+        self.assertEqual(task["status"], "failed")
+        self.assertIn("declared artifact", task["error"])
+        self.assertFalse(result.ok)
+
+    def test_real_artifacts_are_hashed_and_recorded(self) -> None:
+        lib = self.base / "native"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text(
+            "project(nat)\nadd_library(nat SHARED a.c)\n", encoding="utf-8"
+        )
+        ws = self.make_ws("artifacthash")
+        ws.add(lib)
+        location = ws.input_location(ws.inputs[0])
+        (location / "build").mkdir()
+        (location / "build" / "nat.dll").write_bytes(b"MZ" + b"0" * 32)
+        orchestrator = self._stub_orchestrator(ws)
+        result = orchestrator.run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+        records = result.report["artifacts"]
+        self.assertEqual(len(records), 1, records)
+        record = records[0]
+        self.assertEqual(record["module"], "native")
+        self.assertEqual(record["kind"], "shared-library")
+        self.assertEqual(record["size"], 34)
+        self.assertEqual(len(record["sha256"]), 64)
+        task = next(t for t in result.report["tasks"] if t["module_id"] == "native")
+        self.assertEqual(task["outputs"], [record["path"]])
+
+    def test_packages_are_reproducible_with_source_date_epoch(self) -> None:
+        import os
+        from unittest import mock
+
+        ws = self._two_module_workspace()
+        with mock.patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1700000000"}):
+            first = FusionOrchestrator(ws).run(package_format="ece")
+            self.assertTrue(first.ok, first.messages)
+            first_hash = sha256_file(Path(first.package_path))
+            second = FusionOrchestrator(ws).run(package_format="ece")
+            self.assertTrue(second.ok, second.messages)
+            second_hash = sha256_file(Path(second.package_path))
+            zip_first = FusionOrchestrator(ws).run(package_format="zip")
+            zip_hash_one = sha256_file(Path(zip_first.package_path))
+            zip_second = FusionOrchestrator(ws).run(package_format="zip")
+            zip_hash_two = sha256_file(Path(zip_second.package_path))
+        self.assertEqual(first_hash, second_hash)
+        self.assertEqual(zip_hash_one, zip_hash_two)
+
+    def test_each_module_root_is_scanned_once_per_run(self) -> None:
+        from unittest import mock
+
+        from ece_autocompiler.fusion import orchestrator as orchestrator_module
+
+        ws = self._two_module_workspace()
+        calls: list[Path] = []
+        real_scan = orchestrator_module.scan
+
+        def counting_scan(root):
+            calls.append(Path(root))
+            return real_scan(root)
+
+        with mock.patch.object(orchestrator_module, "scan", counting_scan):
+            result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+        self.assertEqual(len(calls), len(set(calls)), "a module root was scanned twice")
+        self.assertEqual(len(calls), len(result.graph.modules))
+
+    def test_module_root_cannot_escape_its_input_directory(self) -> None:
+        from ece_autocompiler.errors import EceError
+        from ece_autocompiler.fusion.models import Module as FusionModule
+
+        app = self.base / "safeapp"
+        app.mkdir()
+        (app / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        ws = self.make_ws("escape")
+        ws.add(app)
+        inp = ws.inputs[0]
+        orchestrator = FusionOrchestrator(ws)
+        evil = FusionModule(
+            module_id="evil", language="python", adapter_id="python",
+            input_id=inp.input_id, root="../../outside",
+        )
+        with self.assertRaises(EceError):
+            orchestrator._module_root(evil)
+        inside = FusionModule(
+            module_id="sub", language="python", adapter_id="python",
+            input_id=inp.input_id, root="sub",
+        )
+        self.assertEqual(
+            orchestrator._module_root(inside),
+            (ws.input_location(inp) / "sub").resolve(),
+        )
+
+    def test_dependency_cycle_aborts_instead_of_building_in_guessed_order(self) -> None:
+        a = self.base / "a"
+        a.mkdir()
+        (a / "__init__.py").write_text("import b\n", encoding="utf-8")
+        b = self.base / "b"
+        b.mkdir()
+        (b / "__init__.py").write_text("import a\n", encoding="utf-8")
+        ws = self.make_ws("cycle-build")
+        ws.add(a); ws.add(b)
+        result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertFalse(result.ok)
+        by_id = {t["module_id"]: t for t in result.report["tasks"]}
+        self.assertEqual(by_id["a"]["status"], "failed")
+        self.assertEqual(by_id["b"]["status"], "failed")
+        self.assertIn("dependency cycle", by_id["a"]["error"])
+        self.assertFalse([t for t in result.report["tasks"] if t.get("cached")])
+
+    def test_native_entry_executable_is_placed_at_the_application_root(self) -> None:
+        lib = self.base / "nativetool"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text(
+            "project(nativetool)\nadd_executable(nativetool a.c)\n", encoding="utf-8"
+        )
+        ws = self.make_ws("nativeentry")
+        ws.add(lib)
+        ws.config.entry_point = "nativetool"
+        location = ws.input_location(ws.inputs[0])
+        (location / "build").mkdir()
+        (location / "build" / "nativetool.exe").write_bytes(b"MZ" + b"1" * 16)
+        orchestrator = self._stub_orchestrator(ws)
+        result = orchestrator.run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+        assembly = Path(result.assembly_dir)
+        self.assertTrue((assembly / "nativetool.exe").is_file())
+        self.assertTrue(
+            any("entry artifacts placed at the application root" in n for n in result.report["assembly"]),
+            result.report["assembly"],
+        )
+
+    def test_exclude_rules_remove_files_from_the_package(self) -> None:
+        from ece_autocompiler.container import ContainerReader
+
+        ws = self._two_module_workspace()
+        ws.config.exclude = ["support/pyproject.toml"]
+        result = FusionOrchestrator(ws).run(package_format="ece")
+        self.assertTrue(result.ok, result.messages)
+        reader = ContainerReader(Path(result.package_path))
+        reader.open()
+        try:
+            paths = sorted(entry.path for entry in reader.entries())
+        finally:
+            reader.close()
+        self.assertNotIn("support/pyproject.toml", paths)
+        self.assertIn("support/__init__.py", paths)
+        self.assertGreaterEqual(result.report["package_filters"]["excluded_files"], 1)
+
+    def test_include_rules_restrict_a_folder_output(self) -> None:
+        ws = self._two_module_workspace()
+        ws.config.include = ["*.py"]
+        result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+        files = [p for p in Path(result.assembly_dir).rglob("*") if p.is_file()]
+        self.assertTrue(files)
+        self.assertTrue(all(p.suffix == ".py" for p in files), files)
+        self.assertGreaterEqual(result.report["package_filters"]["excluded_files"], 1)
+
+    def test_exe_format_is_rejected_instead_of_faking_an_executable(self) -> None:
+        ws = self._two_module_workspace()
+        result = FusionOrchestrator(ws).run(package_format="exe")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.package_path, "")
+        self.assertIn("will not rename", " ".join(result.messages))
+        self.assertFalse(list(ws.generated_dir.rglob("*.exe")))
+
+    def test_changing_build_settings_invalidates_the_cache(self) -> None:
+        ws = self._two_module_workspace()
+        first = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(first.ok, first.messages)
+        ws.config.optimization_profile = "release-fast"
+        second = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(second.ok, second.messages)
+        self.assertFalse(
+            [t for t in second.report["tasks"] if t.get("cached")],
+            "a changed optimization profile must rebuild every module",
+        )
+
+    def test_package_artifact_is_hashed(self) -> None:
+        ws = self._two_module_workspace()
+        result = FusionOrchestrator(ws).run(package_format="ece")
+        self.assertTrue(result.ok, result.messages)
+        package = result.report["package_artifact"]
+        self.assertEqual(package["format"], "ece")
+        self.assertEqual(package["path"], result.package_path)
+        self.assertGreater(package["size"], 0)
+        self.assertEqual(len(package["sha256"]), 64)
+        self.assertEqual(sha256_file(Path(result.package_path)), package["sha256"])
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +992,24 @@ class CacheStateTests(TempCase):
         build.unlink()
         self.assertFalse(find_cache_hit("m", state, "k1"))
 
+    def test_cache_invalidates_when_a_recorded_output_was_modified(self) -> None:
+        from ece_autocompiler.fusion.incremental import file_hash, find_cache_hit
+
+        build = self.base / "lib.dll"
+        build.write_bytes(b"the real artifact")
+        state = CacheState.load(self.base)
+        state.record(
+            "m", key="k1", outputs=[str(build)], digests={str(build): file_hash(build)}
+        )
+        state.save()
+        reloaded = CacheState.load(self.base)
+        self.assertTrue(find_cache_hit("m", reloaded, "k1"))
+        build.write_bytes(b"tampered artifact")
+        self.assertFalse(
+            find_cache_hit("m", reloaded, "k1"),
+            "a modified artifact must not be served from the cache",
+        )
+
     def test_cache_survives_reload(self) -> None:
         a = self.base / "a.py"
         a.write_text("x = 1\n", encoding="utf-8")
@@ -666,6 +1020,103 @@ class CacheStateTests(TempCase):
         from ece_autocompiler.fusion.incremental import find_cache_hit
 
         self.assertTrue(find_cache_hit("m", reloaded, "k"))
+
+    def test_cache_key_covers_toolchain_and_settings(self) -> None:
+        from ece_autocompiler.fusion.incremental import compute_key
+
+        source = self.base / "a.py"
+        source.write_text("x = 1\n", encoding="utf-8")
+        common = dict(
+            adapter_id="python",
+            configuration="release",
+            target_arch="x64",
+            dependency_keys={},
+        )
+        base = compute_key("m", [source], settings={"toolchain": {"version": "3.12"}}, **common)
+        self.assertEqual(
+            base,
+            compute_key("m", [source], settings={"toolchain": {"version": "3.12"}}, **common),
+        )
+        self.assertNotEqual(
+            base,
+            compute_key("m", [source], settings={"toolchain": {"version": "3.13"}}, **common),
+        )
+
+
+class PythonAdapterTests(TempCase):
+    def test_project_virtual_environment_is_used_for_python_steps(self) -> None:
+        from ece_autocompiler.adapters.python_adapter import PythonAdapter, project_interpreter
+
+        root = self.base / "pyproj"
+        root.mkdir()
+        (root / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        fallback, description = project_interpreter(root)
+        self.assertTrue(fallback)
+        self.assertNotIn("virtual environment", description)
+        venv_python = root / ".venv" / "Scripts" / "python.exe"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_bytes(b"MZ")
+        chosen, description = project_interpreter(root)
+        self.assertEqual(Path(chosen), venv_python)
+        self.assertIn("virtual environment", description)
+        plan = PythonAdapter().create_build_plan(root)
+        self.assertEqual(plan.steps[0].cmd_args[0], str(venv_python))
+        self.assertTrue(any("virtual environment" in note for note in plan.notes), plan.notes)
+
+
+class FusionHistoryTests(TempCase):
+    def test_successful_fusion_build_is_recorded(self) -> None:
+        lib = self.base / "support"
+        lib.mkdir()
+        (lib / "__init__.py").write_text("v = 1\n", encoding="utf-8")
+        (lib / "pyproject.toml").write_text('[project]\nname = "support"\n', encoding="utf-8")
+        app = self.base / "runner"
+        app.mkdir()
+        (app / "main.py").write_text(
+            "import support\nif __name__ == '__main__':\n    print(support.v)\n",
+            encoding="utf-8",
+        )
+        ws = self.make_ws("history-ok")
+        ws.add(lib); ws.add(app)
+        ws.config.entry_point = "runner"
+        result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertTrue(result.ok, result.messages)
+
+        from ece_autocompiler.build import history
+        from ece_autocompiler.fusion.history import record
+
+        store = self.base / "history-store"
+        record(result, base=store)
+        records = history.load(base=store)
+        self.assertEqual(len(records), 1)
+        entry = records[0]
+        self.assertEqual(entry.mode, "fusion")
+        self.assertTrue(entry.ok)
+        self.assertEqual(entry.project_type, "fusion:python")
+        self.assertEqual(entry.format, "folder")
+        self.assertEqual(entry.duration_seconds, result.report["duration_seconds"])
+
+    def test_failed_fusion_build_records_the_module_error(self) -> None:
+        lib = self.base / "native"
+        lib.mkdir()
+        (lib / "CMakeLists.txt").write_text(
+            "project(nat)\nadd_library(nat SHARED a.c)\n", encoding="utf-8"
+        )
+        ws = self.make_ws("history-fail")
+        ws.add(lib)
+        result = FusionOrchestrator(ws).run(package_format="folder")
+        self.assertFalse(result.ok)
+
+        from ece_autocompiler.build import history
+        from ece_autocompiler.fusion.history import record
+
+        store = self.base / "history-store"
+        record(result, base=store)
+        entry = history.load(base=store)[0]
+        self.assertFalse(entry.ok)
+        self.assertEqual(entry.exit_code, 1)
+        self.assertIn("native", entry.message)
+        self.assertTrue(entry.diagnostics)
 
 
 class CliSurfaceTests(TempCase):
@@ -691,11 +1142,34 @@ class CliSurfaceTests(TempCase):
         self.assertEqual(
             cli_main(["workspace", "config", str(ws_dir), "--entry-point", "frontapp"]), 0
         )
+        self.assertEqual(
+            cli_main([
+                "workspace", "config", str(ws_dir),
+                "--exclude", "*.toml", "--include", "*.py",
+                "--jobs", "2", "--test-command", "frontapp=python -c pass",
+            ]),
+            0,
+        )
         # list over a reloaded workspace shows both inputs
         self.assertEqual(cli_main(["workspace", "list", str(ws_dir)]), 0)
         loaded = FusionWorkspace.load(ws_dir)
         self.assertEqual(loaded.config.entry_point, "frontapp")
         self.assertEqual(len(loaded.inputs), 2)
+        self.assertEqual(loaded.config.exclude, ["*.toml"])
+        self.assertEqual(loaded.config.include, ["*.py"])
+        self.assertEqual(loaded.config.max_parallel, 2)
+        self.assertEqual(loaded.config.test_commands["frontapp"], "python -c pass")
+        # a malformed --test-command is a usage error, not a silent setting
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = cli_main(
+                ["workspace", "config", str(ws_dir), "--test-command", "broken"]
+            )
+        self.assertEqual(code, 2)
+        self.assertIn("--test-command expects", buffer.getvalue())
         # plan must surface the dependency and not crash
         self.assertEqual(cli_main(["fuse", "plan", str(ws_dir)]), 0)
         # unknown subcommand is an argparse usage error (SystemExit)
@@ -737,6 +1211,48 @@ class LaunchTests(TempCase):
         self.assertEqual(code, 0)
         launcher = into / "run_application.py"
         self.assertTrue(launcher.exists())
+
+    def test_entry_script_other_than_main_py_is_discovered_and_launched(self) -> None:
+        import subprocess
+        import sys as _sys
+
+        from ece_autocompiler.cli import main as cli_main
+        from ece_autocompiler.container import ContainerReader
+
+        app = self.base / "customentry"
+        app.mkdir()
+        (app / "app.py").write_text(
+            "def main():\n    print('custom entry ran')\n\n"
+            "if __name__ == '__main__':\n    main()\n",
+            encoding="utf-8",
+        )
+        ws = self.make_ws("custom-entry")
+        ws.add(app)
+        ws.config.entry_point = "customentry"
+        result = FusionOrchestrator(ws).run(package_format="ece")
+        self.assertTrue(result.ok, result.messages)
+
+        reader = ContainerReader(Path(result.package_path))
+        reader.open()
+        try:
+            entry_points = reader.manifest.entry_points
+        finally:
+            reader.close()
+        self.assertEqual(entry_points[0]["script"], "app.py")
+
+        into = self.base / "custom-target"
+        self.assertEqual(
+            cli_main(["fuse", "launch", result.package_path, "--into", str(into)]), 0
+        )
+        completed = subprocess.run(
+            [_sys.executable, str(into / "run_application.py")],
+            cwd=str(into),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("custom entry ran", completed.stdout)
 
     def _orbit_ws(self) -> FusionWorkspace:
         lib = self.base / "support"

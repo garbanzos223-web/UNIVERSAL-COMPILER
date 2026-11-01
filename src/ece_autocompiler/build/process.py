@@ -257,6 +257,13 @@ def run_command(
                     proc.kill()
 
             reader.join(timeout=2)
+            # Close the pipe explicitly: the reader stops at EOF, but the
+            # stream object itself would otherwise stay open until GC.
+            try:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+            except OSError:  # pragma: no cover - already closed
+                pass
 
             # Drain anything the reader produced after we stopped.
             while True:

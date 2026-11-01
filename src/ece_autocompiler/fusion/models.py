@@ -25,6 +25,14 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Parse an integer from a user-authored file without raising."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -55,7 +63,8 @@ class FusionConfig:
     #: Inclusion/exclusion rules for the final package.
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
-    #: "ece" | "zip" | "folder" | "exe"
+    #: "ece" | "zip" | "folder" (a single .exe is not a fusion format; the
+    #: entry point's own toolchain produces native executables).
     package_format: str = "ece"
     optimization_profile: str = "none"
     #: module id -> command that tests it.
@@ -68,6 +77,8 @@ class FusionConfig:
     python_roles: dict[str, str] = field(default_factory=dict)
     #: Run Unreal's BuildCookRun packaging when the engine is installed.
     package_unreal: bool = False
+    #: Maximum modules built concurrently (0 = automatic, capped at 4).
+    max_parallel: int = 0
     description: str = ""
     notes: str = ""
 
@@ -93,6 +104,7 @@ class FusionConfig:
             "toolchains": dict(self.toolchains),
             "python_roles": dict(self.python_roles),
             "package_unreal": self.package_unreal,
+            "max_parallel": self.max_parallel,
             "description": self.description,
             "notes": self.notes,
         }
@@ -106,7 +118,7 @@ class FusionConfig:
             "integration_methods", "asset_dirs", "include", "exclude",
             "package_format", "optimization_profile", "test_commands",
             "runtime_requirements", "toolchains", "python_roles", "package_unreal",
-            "description", "notes",
+            "max_parallel", "description", "notes",
         }
         config = cls(
             name=str(raw.get("name", "application")),
@@ -132,6 +144,7 @@ class FusionConfig:
             toolchains={str(k): str(v) for k, v in (raw.get("toolchains") or {}).items()},
             python_roles={str(k): str(v) for k, v in (raw.get("python_roles") or {}).items()},
             package_unreal=bool(raw.get("package_unreal", False)),
+            max_parallel=_safe_int(raw.get("max_parallel", 0)),
             description=str(raw.get("description", "")),
             notes=str(raw.get("notes", "")),
         )

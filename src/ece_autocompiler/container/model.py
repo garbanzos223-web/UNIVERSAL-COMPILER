@@ -9,6 +9,7 @@ written by a newer tool is not silently stripped by an older one.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -247,4 +248,17 @@ def compute_content_hash(entries: list[FileEntry], algo: str = "sha256") -> str:
 
 
 def _now_utc() -> str:
+    """Timestamp for new manifests, honoring ``SOURCE_DATE_EPOCH``.
+
+    The reproducible-builds convention lets a caller pin the timestamp so two
+    identical builds produce identical bytes instead of differing only in
+    ``created_utc``.
+    """
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    if epoch:
+        try:
+            moment = datetime.fromtimestamp(int(epoch), timezone.utc)
+            return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except (OverflowError, OSError, ValueError):
+            pass
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

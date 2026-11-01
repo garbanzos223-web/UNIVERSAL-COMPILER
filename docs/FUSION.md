@@ -50,14 +50,23 @@ a connection is missing, the plan says exactly what is missing.
   treated as cooked Unreal assets; asset-processing Python runs at build
   time and editor-only scripts are never copied into the packaged game.
 - `src/ece_autocompiler/fusion/incremental.py` — dependency-aware cache:
-  a module's key = SHA-256 over its source hashes + configuration +
-  dependency keys. Rebuild only what changed; invalidate consumers when a
-  dependency rebuilds; drop the entry when a build fails or outputs vanish.
+  a module's key = SHA-256 over its source hashes + configuration + the
+  module's build settings (build tool, optimization profile, real toolchain
+  path/version) + dependency keys. Rebuild only what changed; invalidate
+  consumers when a dependency rebuilds; drop the entry when a build fails or
+  its recorded outputs vanish.
+- `src/ece_autocompiler/fusion/history.py` — writes each fused build into the
+  shared history store (mode `fusion`), so `ece-autocompiler history` lists
+  fusion runs next to ordinary ones.
 - `src/ece_autocompiler/fusion/repair.py` — one failed module is analysed by
   the existing repair engine (real diagnostics, minimal proposals, rollback
   that keeps only changes that helped), then the module is rebuilt.
 - `src/ece_autocompiler/fusion/orchestrator.py` — the 9-stage pipeline that
-  assembles, packages (ECE/ZIP/folder), validates and reports.
+  assembles, packages (ECE/ZIP/folder), validates and reports. Independent
+  modules build concurrently (bounded, one module per directory), a failed
+  dependency skips its consumers instead of building them, every artifact is
+  checked against the outputs the manifest declared, and sizes/SHA-256s are
+  written to `report.json`.
 
 ## Workflow
 
@@ -71,13 +80,42 @@ ece-autocompiler workspace config <dir> --entry-point mygame --depend app=native
 ece-autocompiler fuse plan <dir>          # modules, order, bridges, conflicts
 ece-autocompiler fuse validate <dir>      # compatibility report
 ece-autocompiler fuse build <dir> [--format ece|zip|folder] [--no-cache]
-                                        [--repair-attempts N]
+                                        [--repair-attempts N] [--jobs N]
 ece-autocompiler fuse launch <app.ece> [--into DIR]
 ```
 
+`--jobs N` bounds how many independent modules build at once (default:
+automatic, at most 4; 1 forces serial builds). The GUI exposes the same
+choice as "Parallel modules" and shows each module's progress.
+
 Build result files live in `<workspace>/ece-generated/`: per-module build
-logs, `report.json` (the full build report: tasks, graph, bridges, cache
-hits, repairs, validation), the assembled application and the package.
+and test logs, `report.json` (tasks, graph, bridges, cache hits, repairs,
+per-artifact size/SHA-256/toolchain, package hash, validation), the
+assembled application and the package. Each build is also appended to the
+shared history store and appears in `ece-autocompiler history`.
+
+### Package filters
+
+`include` and `exclude` in `ece-project.json` are glob patterns matched
+against paths inside the assembled application (`*` also crosses directory
+separators). `exclude` always wins; a non-empty `include` list restricts the
+package to matching files. The same rules apply to `.ece`, ZIP and folder
+outputs, and `report.json` records how many files were kept and dropped.
+
+### Python interpreters
+
+A project-local virtual environment (`.venv` or `venv`, Windows or POSIX
+layout) is used for that module's Python steps when it really exists;
+otherwise the interpreter found on this machine is used. The plan notes which
+one was chosen.
+
+### Reproducible packages
+
+Set the standard `SOURCE_DATE_EPOCH` environment variable to pin the
+manifest timestamp and the ZIP entry timestamps; two runs over unchanged
+inputs then produce byte-identical `.ece` or ZIP packages. The fusion
+manifest stores a structural graph snapshot taken before any build, so
+cache state and build durations never leak into the package bytes.
 
 ## ECE container extension
 
@@ -108,16 +146,27 @@ traversal protections.
 - Files that belong to no project manifest (lone scripts) become modules via
   source hints only when painting is unambiguous; otherwise they are listed
   as unassigned inputs rather than invented into modules.
-- The assembler currently launches Python entry points with a generated
+- The assembler launches Python entry points with a generated
   `run_application.py` launcher that puts every bundled module on the import
-  path. Native entry points come from their own toolchain's outputs.
+  path and runs the real script that carries the `__main__` guard (`main.py`
+  is preferred, other names such as `app.py` are recorded in the manifest).
+  Native entry points come from their own toolchain's outputs and their
+  executable (plus libraries) is copied to the application root.
+- A dependency cycle is reported and its modules are marked failed; the
+  engine never invents a build order for a cycle or builds one member against
+  a missing provider.
 
 ## Tests
 
-`tests/unit/test_fusion.py` (37 tests) covers workspace operations and
-guarantees, module detection/dependencies/ordering/cycles/entry points,
-bridge decisions, PE architecture checks, end-to-end Python fusion (real
-builds on this toolchain, including running the assembled application),
-cache hit/invalidation, honest missing-toolchain failures, and Unreal
-command construction plus honest engine-missing reporting. Tests that need
-unavailable toolchains assert honest failure, never success.
+`tests/unit/test_fusion.py` (63 tests) covers workspace operations and
+guarantees (including symlinks never being followed), module
+detection/dependencies/ordering/cycles/entry points, bridge decisions, PE
+architecture checks, end-to-end Python fusion (real builds on this
+toolchain, including running the assembled application), cache
+hit/invalidation (including toolchain/settings changes), bounded parallel
+scheduling and failure propagation, declared-artifact verification with
+hashing, package include/exclude filters, native entry executables placed at
+the application root, venv-aware Python steps, reproducible packages, history
+recording, honest missing-toolchain failures, and Unreal command construction
+plus honest engine-missing reporting. Tests that need unavailable toolchains
+assert honest failure, never success.

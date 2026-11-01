@@ -82,7 +82,9 @@ def _iter_files(root: Path, limit: int = 8000) -> list[Path]:
     if root.is_file():
         return [root]
     for item in sorted(root.rglob("*")):
-        if item.is_dir():
+        if item.is_dir() or item.is_symlink():
+            # Symbols are never followed: a link can point outside the input
+            # and would leak unrelated files into the build or the package.
             continue
         rel_parts = item.relative_to(root).parts[:-1]
         if any(part in _SKIP_DIRS for part in rel_parts):

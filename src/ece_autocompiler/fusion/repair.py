@@ -79,7 +79,10 @@ def repair_module(
             lines.extend(step.output_lines)
         return BuildOutcome(ok=result.ok, output="\n".join(lines))
 
-    engine = RepairEngine(AppConfig(), work_dir=workspace.generated_dir / "repair")
+    # One repair workspace per module: concurrent module builds may repair at
+    # the same time, and they must never share backups or scratch files.
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in module.module_id)
+    engine = RepairEngine(AppConfig(), work_dir=workspace.generated_dir / "repair" / safe_name)
     outcome = engine.repair(
         root,
         build_runner,

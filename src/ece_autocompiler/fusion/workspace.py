@@ -293,10 +293,16 @@ class FusionWorkspace:
             return files, total_bytes
 
         dest_root.mkdir(parents=True, exist_ok=True)
+        symlinks = 0
         for item in sorted(src.rglob("*")):
             if item.is_dir():
                 continue
             if any(part in _SKIPPED_DIRS for part in item.relative_to(src).parts[:-1]):
+                continue
+            if item.is_symlink():
+                # Never follow a link: it can point outside the imported
+                # folder and would copy unrelated files into the workspace.
+                symlinks += 1
                 continue
             rel = item.relative_to(src)
             dest = dest_root / rel
@@ -307,6 +313,8 @@ class FusionWorkspace:
             shutil.copy2(item, dest)
             files += 1
             total_bytes += item.stat().st_size
+        if symlinks:
+            notes.append(f"skipped {symlinks} symbolic link(s); links are never followed")
         skipped = sorted(
             p.name
             for p in src.rglob("*")
@@ -332,6 +340,8 @@ class FusionWorkspace:
         if is_file:
             return 1, src.stat().st_size
         for item in src.rglob("*"):
+            if item.is_symlink():
+                continue
             if item.is_file() and not any(part in _SKIPPED_DIRS for part in item.relative_to(src).parts[:-1]):
                 files += 1
                 total += item.stat().st_size

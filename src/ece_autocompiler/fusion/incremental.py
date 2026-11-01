@@ -10,8 +10,8 @@ A module's cache key is the SHA-256 of a JSON blob containing:
 
 Keys are stored in ``<workspace>/.ece-cache/modules.json``. A module is a
 cache hit only when the stored key matches AND every recorded output file
-still exists on disk. Correctness beats speed: when a key cannot be computed
-honestly the module is rebuilt.
+still exists with the SHA-256 recorded for it. Correctness beats speed: when
+a key cannot be computed honestly the module is rebuilt.
 """
 
 from __future__ import annotations
@@ -51,15 +51,26 @@ class CacheState:
         return state
 
     def save(self) -> None:
+        from ..local_store import write_json_atomic
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"format": "ece-fusion-cache", "modules": self.entries}, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        write_json_atomic(
+            self.path,
+            {"format": "ece-fusion-cache", "modules": self.entries},
         )
 
     # ------------------------------------------------------------------
-    def record(self, module_id: str, key: str, outputs: list[str]) -> None:
-        self.entries[module_id] = {"key": key, "outputs": list(outputs)}
+    def record(
+        self,
+        module_id: str,
+        key: str,
+        outputs: list[str],
+        digests: dict[str, str] | None = None,
+    ) -> None:
+        entry: dict[str, Any] = {"key": key, "outputs": list(outputs)}
+        if digests:
+            entry["digests"] = dict(digests)
+        self.entries[module_id] = entry
 
     def lookup(self, module_id: str) -> dict[str, Any] | None:
         return self.entries.get(module_id)
@@ -76,6 +87,17 @@ def file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _json_safe(value: Any) -> Any:
+    """Coerce a settings value into something the key payload can serialize."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
 def compute_key(
     module_id: str,
     source_files: list[Path],
@@ -84,6 +106,7 @@ def compute_key(
     configuration: str,
     target_arch: str,
     dependency_keys: dict[str, str],
+    settings: dict[str, Any] | None = None,
 ) -> str:
     payload = {
         "module": module_id,
@@ -92,6 +115,10 @@ def compute_key(
         "architecture": target_arch,
         "files": ["", ""],  # replaced below with real hashes
         "dependencies": dict(sorted(dependency_keys.items())),
+        # Toolchain identity and build settings: changing the compiler or an
+        # optimization profile must invalidate the cache even when no source
+        # file changed.
+        "settings": _json_safe(settings or {}),
     }
 
     if not source_files:
@@ -115,11 +142,27 @@ def find_cache_hit(
     state: CacheState,
     key: str,
 ) -> bool:
-    """A hit requires both the key match AND the recorded outputs on disk."""
+    """A hit requires the key match, the outputs on disk and their content.
+
+    Recorded digests are checked so a tampered, truncated or half-deleted
+    artifact cannot be shipped as if the build were still valid.
+    """
     entry = state.lookup(module_id)
     if not entry or entry.get("key") != key:
         return False
     outputs = entry.get("outputs") or []
     if not outputs:
         return False
-    return all(Path(out).exists() for out in outputs)
+    digests = entry.get("digests") or {}
+    for out in outputs:
+        path = Path(out)
+        if not path.is_file():
+            return False
+        expected = digests.get(out)
+        if expected:
+            try:
+                if file_hash(path) != expected:
+                    return False
+            except OSError:
+                return False
+    return True

@@ -31,6 +31,25 @@ from .base import (
 )
 
 
+def project_interpreter(root: Path) -> tuple[str, str]:
+    """The interpreter that should run a project's Python steps.
+
+    A project-local virtual environment is honored when it really exists
+    (``.venv``/``venv``, Windows or POSIX layout); otherwise the interpreter
+    found on this machine is used. Returns ``(executable, description)``.
+    """
+    for candidate in (
+        root / ".venv" / "Scripts" / "python.exe",
+        root / "venv" / "Scripts" / "python.exe",
+        root / ".venv" / "bin" / "python",
+        root / "venv" / "bin" / "python",
+    ):
+        if candidate.is_file():
+            return str(candidate), "the project virtual environment"
+    py = get_tool("python")
+    return (py.path or "python") if py else "python", "the Python found on this machine"
+
+
 class PythonAdapter(BuildAdapter):
     adapter_id = "python"
     display_name = "Python"
@@ -101,8 +120,7 @@ class PythonAdapter(BuildAdapter):
         steps: list[BuildPlanStep] = []
         # Step 1: byte-compile to verify syntax and produce *.pyc-like artifacts where appropriate.
         # This is a real, safe action (no network, no system changes).
-        py = get_tool("python")
-        exe = py.path or "python"
+        exe, interpreter_note = project_interpreter(root)
         steps.append(
             BuildPlanStep(
                 id="compileall",
@@ -136,7 +154,10 @@ class PythonAdapter(BuildAdapter):
             workdir=root,
             output_dirs=out_dirs,
             artifacts_expected=["source tree", "compiled artifacts"],
-            notes=["Byte-compile is non-destructive and verifies basic syntax."],
+            notes=[
+                "Byte-compile is non-destructive and verifies basic syntax.",
+                f"Python steps use {interpreter_note}: {exe}",
+            ],
         )
 
     def execute_build(
