@@ -47,7 +47,7 @@ class CompanionIntegrationTests(unittest.TestCase):
         script = self.tmp / f"{name}.py"
         script.write_text(
             "import os, pathlib, time\n"
-            f"pathlib.Path(os.environ['TEMP'], {flag!r}).write_text('ran', encoding='utf-8')\n"
+            f"pathlib.Path(os.environ['TEMP'], {flag!r}).write_text(str(time.time()), encoding='utf-8')\n"
             "time.sleep(2)\n",
             encoding="utf-8",
         )
@@ -84,8 +84,15 @@ class CompanionIntegrationTests(unittest.TestCase):
         b = Path(os.environ.get("TEMP", ".")) / "ece_flag_b.txt"
         self.assertTrue(a.is_file(), "the first embedded program never ran")
         self.assertTrue(b.is_file(), "the second embedded program never ran")
-        # Both sleep 2 s and must run concurrently, not one after the other.
-        self.assertLess(duration, 3.8, f"programs appear to have run sequentially ({duration:.1f}s)")
+        # Compare start timestamps: both must have started at the same time,
+        # regardless of how slow onefile extraction is on a CI runner.
+        first_start = float(a.read_text(encoding="utf-8"))
+        second_start = float(b.read_text(encoding="utf-8"))
+        self.assertLess(
+            abs(first_start - second_start), 2.0,
+            f"programs did not start together (delta {abs(first_start - second_start):.2f}s)",
+        )
+        self.assertLess(duration, 15.0, f"combined launcher took too long ({duration:.1f}s)")
 
 
 if __name__ == "__main__":  # pragma: no cover

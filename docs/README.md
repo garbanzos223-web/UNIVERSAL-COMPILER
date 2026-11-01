@@ -20,6 +20,7 @@ Start here:
 
 Release notes kept for historical reference:
 
+- [1.4.0 release notes](RELEASE_NOTES_1.4.md)
 - [1.3.0 release notes](RELEASE_NOTES_1.3.md)
 - [1.2 release notes](RELEASE_NOTES_1.2.md)
 - [0.1.0 release notes](RELEASE_NOTES_v0.1.0.md)

@@ -374,9 +374,9 @@ base runtime standard-library only.
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) and the
-[1.3.0 release notes](docs/RELEASE_NOTES_1.3.md). Release 1.3.0 adds the
-integrated decompiler, the source editor, the recompiler and universal format
-analysis.
+[1.4.0 release notes](docs/RELEASE_NOTES_1.4.md). Release 1.4.0 adds the
+combined executable launcher and completes the decompile → edit → recompile
+loop.
 
 ## License
 

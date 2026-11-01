@@ -15,7 +15,6 @@ import hashlib
 import os
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -252,12 +251,21 @@ def build_companion_exe(
         result.errors.append("The output cannot replace one of the input executables.")
         return result
 
-    try:
-        import PyInstaller  # noqa: F401
-    except ImportError:
+    from .exe_exporter import pyinstaller_available, pyinstaller_interpreter
+
+    interpreter = pyinstaller_interpreter()
+    if interpreter is None:
         result.errors.append(
-            "PyInstaller is not installed. Install it with: "
-            "python -m pip install pyinstaller"
+            "This is a standalone build and no Python interpreter was found on "
+            "PATH to host PyInstaller. Install Python from "
+            "https://www.python.org/downloads/windows/ and run the bundler again."
+        )
+        return result
+    available, info = pyinstaller_available()
+    if not available:
+        result.errors.append(
+            f"PyInstaller is not usable with {interpreter}: {info}. "
+            "Install it with: python -m pip install pyinstaller"
         )
         return result
 
@@ -293,7 +301,7 @@ def build_companion_exe(
     launcher.write_text(_launcher_source(main_rel, companion_rels), encoding="utf-8")
 
     command = [
-        sys.executable, "-m", "PyInstaller",
+        interpreter, "-m", "PyInstaller",
         "--noconfirm", "--clean",
         "--onefile" if request.onefile else "--onedir",
         "--console" if request.console else "--windowed",

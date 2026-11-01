@@ -70,7 +70,24 @@ jobs:
       - name: Integration tests (real Python/Node/.exe builds)
         run: |
           python -m pip install --disable-pip-version-check pyinstaller
-          python run_tests.py integration
+          python run_tests.py integration 2>&1 | Tee-Object -FilePath integration-tests.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Report failing integration tests as annotations
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path integration-tests.log) {
+            $lines = Get-Content integration-tests.log
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '^(FAIL|ERROR):') {
+                $end = [Math]::Min($i + 14, $lines.Count - 1)
+                $snippet = ($lines[$i..$end] -join ' ') -replace '\s+', ' '
+                Write-Output "::error title=$($lines[$i])::$snippet"
+              }
+            }
+            Get-Content integration-tests.log -Tail 60
+          }
 
       # GUI smoke: MainWindow + compiler dialogs + DECOMPILER tab + real
       # container extraction. Skips itself cleanly without a display.
