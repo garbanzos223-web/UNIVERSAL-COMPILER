@@ -246,11 +246,11 @@ def _extract_cmake(module: Module, root: Path, files: list[Path], registry: _Nam
 
 def _extract_cargo(module: Module, root: Path, files: list[Path], abs_path: Path, registry: _NameRegistry) -> None:
     try:
-        import tomllib
-    except ImportError:  # pragma: no cover - Python 3.11 always has tomllib
-        tomllib = None
+        import tomllib  # Python 3.11+
+    except ImportError:
+        from . import toml_lite as tomllib  # Python 3.10 fallback
     cargo = abs_path / "Cargo.toml"
-    if not cargo.exists() or tomllib is None:
+    if not cargo.exists():
         return
     try:
         data = tomllib.loads(_read_text(cargo))
