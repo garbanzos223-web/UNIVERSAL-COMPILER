@@ -520,6 +520,12 @@ class OrchestratorTests(TempCase):
         self.assertEqual(proc.returncode, 0)
 
     def test_missing_toolchain_fails_honestly_without_fake_success(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from ece_autocompiler.adapters.base import Requirement, RequirementsReport
+        from ece_autocompiler.adapters.registry import AdapterRegistry
+
         lib = self.base / "native"
         lib.mkdir()
         (lib / "CMakeLists.txt").write_text(
@@ -527,7 +533,17 @@ class OrchestratorTests(TempCase):
         )
         ws = self.make_ws("nocmake")
         ws.add(lib)
-        result = FusionOrchestrator(ws).run(package_format="folder")
+        # Deterministic regardless of the host: the adapter reports the
+        # toolchain as missing, which is exactly the path that must not fake a
+        # success.
+        fake = SimpleNamespace(
+            inspect_requirements=lambda _root: RequirementsReport(
+                requirements=[Requirement("cmake", "CMake", found=False, install_hint="https://cmake.org")],
+                ready=False,
+            )
+        )
+        with mock.patch.object(AdapterRegistry, "for_detected", return_value=fake):
+            result = FusionOrchestrator(ws).run(package_format="folder")
         task = next(t for t in result.report["tasks"] if t["module_id"] == "native")
         self.assertEqual(task["status"], "failed")
         self.assertIn("Toolchain missing", task["error"])

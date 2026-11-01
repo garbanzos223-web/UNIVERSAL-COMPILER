@@ -809,7 +809,10 @@ class FusionOrchestrator:
             return task
         task.duration_seconds = round(time.time() - started, 3)
         task.status = "built" if result.ok else "failed"
-        task.error = "" if result.ok else (result.message or "build failed")
+        detail = getattr(result, "message", "") or ""
+        if not detail and not result.ok:
+            detail = "; ".join(list(getattr(result, "errors", []) or [])[:3]) or "build failed"
+        task.error = "" if result.ok else detail
         module.status = "built" if result.ok else "failed"
         return task
 
