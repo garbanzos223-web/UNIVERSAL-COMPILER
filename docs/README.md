@@ -6,6 +6,7 @@ Start here:
 - [Supported formats and operations](SUPPORTED_FORMATS.md)
 - [Decompiler](DECOMPILER.md)
 - [Recompiler](RECOMPILER.md)
+- [Combined .exe launcher](COMPANION.md)
 - [Architecture](ARCHITECTURE.md)
 - [Development guide](DEVELOPMENT.md)
 - [Testing](TESTING.md)

@@ -63,9 +63,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
-          $notes = "Automated release from commit $env:GITHUB_SHA. "
-          $notes += "The executables were built by scripts/build_exe.ps1 and verified by tools/release_check.py "
-          $notes += "(desktop launch probe, console --version and a real build/validate/package run). "
-          $notes += "See CHANGELOG.md for details."
-          gh release create $env:TAG dist\ECE-AutoCompiler.exe dist\ECE-AutoCompiler-cli.exe dist\release.json `
-            --title "ECE Universal AutoCompiler $env:TAG" --notes $notes
+          $notesFile = Get-ChildItem docs\RELEASE_NOTES_*.md | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($notesFile) {
+            gh release create $env:TAG dist\ECE-AutoCompiler.exe dist\ECE-AutoCompiler-cli.exe dist\release.json `
+              --title "ECE Universal AutoCompiler $env:TAG" --notes-file $notesFile.FullName
+          } else {
+            gh release create $env:TAG dist\ECE-AutoCompiler.exe dist\ECE-AutoCompiler-cli.exe dist\release.json `
+              --title "ECE Universal AutoCompiler $env:TAG" --generate-notes
+          }

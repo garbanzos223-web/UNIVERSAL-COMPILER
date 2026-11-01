@@ -39,8 +39,21 @@ read bytes and metadata only.
 
 ## Current version
 
-**1.3.0** — application release. The `.ece` container format remains
+**1.4.0** — application release. The `.ece` container format remains
 **version 1** and is unchanged by this release.
+
+New in 1.4.0:
+
+- **Combined `.exe` bundler.** Embed one or more `.exe` files inside a new
+  launcher `.exe`; when it starts, every embedded program runs at the same time.
+  Use **Tools → Bundle executables into one .exe...** or
+  `ece-autocompiler bundle-exe output.exe --main app.exe --with helper.exe`.
+- **Complete decompile → edit → recompile loop.** Add files by button or
+  drag-and-drop, decompile, edit the recovered source in the integrated editor,
+  then recompile directly from the reconstructed project. Generated outlines are
+  honestly refused instead of producing a misleading binary.
+- Python 3.10 manifest support (bundled TOML reader for Cargo metadata), CI and
+  fusion fixes described in the changelog.
 
 ## Verified technology stack
 
@@ -152,9 +165,27 @@ python -m ece_autocompiler recompile C:\work\lib-recovered --plan
 # rebuild and verify
 python -m ece_autocompiler recompile C:\work\lib-recovered -o C:\work\rebuilt
 
+# embed two executables in one launcher that starts both together
+python -m ece_autocompiler bundle-exe C:\work\both.exe `
+    --main C:\work\app.exe --with C:\work\helper.exe
+
 # list supported formats
 python -m ece_autocompiler formats
 ```
+
+### Combined `.exe` launcher (new in 1.4)
+
+**Tools → Bundle executables into one .exe...** lets you add any number of
+Windows executables, mark one as the main program, and build a single launcher.
+The selected files are embedded in the launcher; at start-up it launches all
+companions concurrently and then the main program. The launcher stays alive
+while any embedded program runs, so onefile resources are not removed
+underneath a still-running child.
+
+The build verifies the embedding with a probe mode (it does not run your
+programs during verification) and only reports success when the probe passes.
+The output, size, SHA-256 and build log are shown. See
+[docs/COMPANION.md](docs/COMPANION.md).
 
 ## Supported formats
 
@@ -360,6 +391,7 @@ MIT — see [LICENSE](LICENSE).
   - [Supported formats](docs/SUPPORTED_FORMATS.md)
   - [Decompiler](docs/DECOMPILER.md)
   - [Recompiler](docs/RECOMPILER.md)
+  - [Combined .exe launcher](docs/COMPANION.md)
   - [Architecture](docs/ARCHITECTURE.md)
   - [Development](docs/DEVELOPMENT.md)
   - [Testing](docs/TESTING.md)

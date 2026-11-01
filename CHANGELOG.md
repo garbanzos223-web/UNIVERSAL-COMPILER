@@ -6,6 +6,51 @@ application release version follows [Semantic Versioning](https://semver.org/).
 The `.ece` container format has its own version (currently **1**), independent
 of the application version.
 
+## [1.4.0] - 2026-11-01
+
+### Added — combined `.exe` launcher
+
+- **Bundle executables into one .exe**: embed one or more Windows executables
+  inside a new launcher and start them all concurrently at launch.
+- GUI dialog (**Tools → Bundle executables into one .exe...**) with Add/Remove,
+  Set as main, output selection, onefile/onedir, console, plan preview, live
+  build log, size and SHA-256.
+- CLI `bundle-exe OUTPUT --main EXE --with EXE [...] [--onedir] [--console]
+  [--plan] [--json]`.
+- Build verification through a probe mode that checks every embedded file
+  without starting the user's programs; the launcher stays alive while any
+  embedded program runs.
+- New `docs/COMPANION.md`.
+
+### Added — end-to-end binary workflow
+
+- The decompiler workspace supports the complete loop: add files (button or
+  drag-and-drop) → analyse → decompile → edit recovered source → recompile.
+- Recompilation now also refuses generated outlines when no
+  `recovered-project.json` is present (marker detection), not only through the
+  manifest flag.
+
+### Fixed
+
+- Python 3.10: Cargo path dependencies and package metadata are read with a
+  bundled TOML-subset reader (Python 3.11+ still uses `tomllib`).
+- Fusion: a failed module no longer raises `AttributeError` when the adapter
+  returns a `RunResult` without a `message`; the error now comes from
+  `errors`/exit details.
+- Fusion tests are host-independent: missing-toolchain behaviour is simulated
+  deterministically, linked paths and temp paths are compared after
+  `resolve()`, and the toolchain test agrees with the tools actually installed.
+- CI: fixed the invalid YAML in the lint step name, added failing-test
+  annotations and made the decompiler checks part of every matrix job.
+- Recompiler artifact collection falls back to the project folder for Maven,
+  Gradle and Cargo outputs.
+
+### Documentation
+
+- README, changelog, installation, supported formats, testing, architecture and
+  troubleshooting updated for 1.4.0.
+- Added the combined-launcher guide.
+
 ## [1.3.0] - 2026-11-01
 
 ### Added — integrated DECOMPILER workspace
