@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ece-universal-autocompiler"
-version = "1.2"
-description = "Detect, build and package software projects into versioned .ece containers."
+version = "1.3.0"
+description = "Detect, build, package, analyse, decompile and rebuild software projects."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "ECE Universal AutoCompiler contributors" }]
-keywords = ["build", "packaging", "compiler", "cli", "gui", "ece"]
+keywords = ["build", "packaging", "compiler", "cli", "gui", "ece", "decompiler", "recompiler"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Environment :: Console",
     "Environment :: Win32 (MS Windows)",
@@ -22,13 +22,19 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Disassemblers",
 ]
-# No runtime third-party dependencies: the standard library only.
+# No third-party runtime dependencies: the standard library only.
 dependencies = []
 
 [project.optional-dependencies]
 # Development extras are intentionally empty; tests use unittest from the stdlib.
 dev = []
+# Optional decompiler extras. The bundled readers work without them.
+decompile = [
+    "pefile>=2023.2.7; platform_system == 'Windows'",
+    "capstone>=5.0",
+]
 
 [project.scripts]
 ece-autocompiler = "ece_autocompiler.app:run"
@@ -37,8 +43,9 @@ ece-autocompiler = "ece_autocompiler.app:run"
 ece-autocompiler-gui = "ece_autocompiler.ui:run_app"
 
 [project.urls]
-Homepage = "https://github.com/ece-universal-autocompiler"
-Source = "https://github.com/ece-universal-autocompiler"
+Homepage = "https://github.com/garbanzos223-web/UNIVERSAL-COMPILER"
+Source = "https://github.com/garbanzos223-web/UNIVERSAL-COMPILER"
+Issues = "https://github.com/garbanzos223-web/UNIVERSAL-COMPILER/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

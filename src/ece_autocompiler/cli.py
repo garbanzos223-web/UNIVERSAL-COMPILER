@@ -13,6 +13,9 @@ Subcommands mirror the GUI workflow so the tool is usable head-less and in CI:
     inspect   print a container's manifest and file index
     extract   safely extract a container
     diff      compare two .ece containers
+    decompile analyse files and reconstruct an editable project
+    recompile rebuild a recovered project with a real toolchain
+    formats   list the decompiler's supported formats and operations
     tools     list detected toolchains and what is missing
     doctor    check that this machine is ready to build
     init      create a new project from a template
@@ -348,6 +351,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("gui", help="Launch the desktop interface.")
 
+    # -- decompiler / recompiler -----------------------------------------
+    p_decompile = sub.add_parser(
+        "decompile",
+        help="Analyse files and reconstruct an editable project (no file is executed).",
+    )
+    p_decompile.add_argument("path", nargs="+", help="Files or folders to analyse.")
+    p_decompile.add_argument("-o", "--output", help="Output folder (default: a new folder in the output directory).")
+    p_decompile.add_argument("--analyze-only", action="store_true", help="Detect and analyse; write no project.")
+    p_decompile.add_argument("--no-disassembly", action="store_true", help="Do not run a disassembler.")
+    p_decompile.add_argument("--no-resources", action="store_true", help="Do not extract resources.")
+    p_decompile.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_decompile.add_argument("--quiet", action="store_true", help="Only print the final summary.")
+    p_decompile.add_argument("--overwrite", action="store_true", help="Allow writing into a non-empty output folder.")
+
+    p_recompile = sub.add_parser(
+        "recompile",
+        help="Rebuild a recovered project with its real toolchain and verify the artifact.",
+    )
+    p_recompile.add_argument("path", help="Recovered project folder.")
+    p_recompile.add_argument("-o", "--output", help="Output folder for the rebuilt artifacts.")
+    p_recompile.add_argument("--exe", action="store_true", help="Python: build a standalone .exe with PyInstaller.")
+    p_recompile.add_argument("--plan", action="store_true", help="Show the commands and exit; run nothing.")
+    p_recompile.add_argument("--consent", action="store_true", help="Allow steps that run project scripts.")
+    p_recompile.add_argument("--json", action="store_true", help="Emit JSON.")
+    p_recompile.add_argument("--quiet", action="store_true", help="Only print the final summary.")
+
+    p_formats = sub.add_parser("formats", help="List supported formats and the operations available.")
+    p_formats.add_argument("--json", action="store_true", help="Emit JSON.")
+
     # -- fusion engine ---------------------------------------------------
     p_ws = sub.add_parser(
         "workspace", help="Create and manage a multi-input fusion workspace."
@@ -406,6 +438,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--asset-dir", action="append", default=[],
         help="Declare a workspace-relative asset directory (repeatable).",
     )
+    p_ws_config.add_argument(
+        "--include", action="append", default=[],
+        help="Keep only package files matching this glob (repeatable).",
+    )
+    p_ws_config.add_argument(
+        "--exclude", action="append", default=[],
+        help="Leave package files matching this glob out (repeatable).",
+    )
+    p_ws_config.add_argument(
+        "--jobs", type=int,
+        help="Maximum modules built concurrently (0 = automatic).",
+    )
+    p_ws_config.add_argument(
+        "--test-command", action="append", default=[],
+        help="Run 'MODULE=COMMAND' after that module builds (repeatable).",
+    )
 
     p_fuse = sub.add_parser("fuse", help="Fusion engine: plan, validate or build a workspace.")
     fuse_sub = p_fuse.add_subparsers(dest="fuse_command", required=True)
@@ -429,6 +477,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_fuse_build.add_argument(
         "--repair-attempts", type=int, default=0,
         help="When a module build fails, try the repair engine this many times (default: 0 = off).",
+    )
+    p_fuse_build.add_argument(
+        "-j", "--jobs", type=int, default=None,
+        help="Build this many independent modules concurrently (default: automatic, max 4).",
     )
     p_fuse_launch = fuse_sub.add_parser(
         "launch", help="Extract a fusion .ece package and start its entry point."
@@ -1695,9 +1747,27 @@ def cmd_workspace(args) -> int:
             for path in args.asset_dir or []:
                 if path not in workspace.config.asset_dirs:
                     workspace.config.asset_dirs.append(path)
+            for pattern in args.include or []:
+                if pattern not in workspace.config.include:
+                    workspace.config.include.append(pattern)
+            for pattern in args.exclude or []:
+                if pattern not in workspace.config.exclude:
+                    workspace.config.exclude.append(pattern)
+            if args.jobs is not None:
+                workspace.config.max_parallel = max(0, args.jobs)
+            for pair in args.test_command or []:
+                if "=" not in pair:
+                    _print(f"error: --test-command expects 'module=command', got {pair!r}")
+                    return EXIT_USAGE
+                module_id, command = pair.split("=", 1)
+                workspace.config.test_commands[module_id.strip()] = command.strip()
             workspace.save()
             if args.show or not any(
-                [args.entry_point, args.name, args.version, args.package_format, args.depend, args.asset_dir]
+                [
+                    args.entry_point, args.name, args.version, args.package_format,
+                    args.depend, args.asset_dir, args.include, args.exclude,
+                    args.jobs is not None, args.test_command,
+                ]
             ):
                 _print(json.dumps(workspace.config.to_dict(), indent=2, ensure_ascii=False))
             return EXIT_OK
@@ -1831,10 +1901,18 @@ def _fuse_build(args) -> int:
     orchestrator = FusionOrchestrator(
         workspace, progress=lambda stage, detail: _print(f"[{stage}] {detail}")
     )
+    jobs = getattr(args, "jobs", None)
     result = orchestrator.run(
         package_format=args.format, output=output,
         use_cache=not args.no_cache, repair_attempts=max(0, args.repair_attempts),
+        max_parallel=max(1, jobs) if jobs else None,
     )
+    try:
+        from .fusion.history import record as record_fusion_history
+
+        record_fusion_history(result)
+    except Exception as exc:  # history must never turn a build into a failure
+        _print(f"warning: build history not recorded: {exc}")
     if args.json:
         _print(_json.dumps(result.report, indent=2, ensure_ascii=False))
     else:
@@ -1855,6 +1933,180 @@ def _fuse_build(args) -> int:
     return EXIT_OK if result.ok else EXIT_ERROR
 
 
+
+
+def _unique_output_dir(base: Path) -> Path:
+    """Return *base*, or base-2/base-3... if it already holds files."""
+    base = Path(base)
+    if not base.exists():
+        return base
+    try:
+        if not any(base.iterdir()):
+            return base
+    except OSError:
+        return base
+    for counter in range(2, 1000):
+        candidate = base.with_name(f"{base.name}-{counter}")
+        if not candidate.exists() or not any(candidate.iterdir()):
+            return candidate
+    return base
+
+
+def cmd_decompile(args) -> int:
+    from .decompiler import DecompileOptions, DecompileSession, expand_inputs
+
+    requested = [Path(item) for item in args.path]
+    missing = [str(path) for path in requested if not path.exists()]
+    if missing:
+        _print("error: these paths do not exist: " + ", ".join(missing))
+        return EXIT_ERROR
+    inputs = expand_inputs(requested)
+    if not inputs:
+        _print("error: no input file was found.")
+        return EXIT_ERROR
+
+    def progress(message: str, done: int, total: int) -> None:
+        if not args.quiet and not args.json:
+            _print(f"[{done + 1:>3}/{total}] {message}")
+
+    options = DecompileOptions(
+        disassemble=not args.no_disassembly,
+        extract_resources=not args.no_resources,
+    )
+
+    if args.analyze_only:
+        from .decompiler import analyze_file
+
+        analyses = []
+        for index, path in enumerate(inputs):
+            progress(f"Analyzing {path.name}", index, len(inputs))
+            try:
+                analysis = analyze_file(path)
+            except Exception as exc:
+                _print(f"error: {path}: {exc}")
+                continue
+            analyses.append(analysis)
+            if not args.quiet and not args.json:
+                _print("")
+                _print("\n".join(analysis.summary_lines()))
+        if args.json:
+            _print_json([analysis.to_dict() for analysis in analyses])
+        elif analyses:
+            _print("")
+            _print(f"Analyzed {len(analyses)} file(s). Nothing was executed.")
+        return EXIT_OK if len(analyses) == len(inputs) else EXIT_ERROR
+
+    config = AppConfig()
+    if args.output:
+        output = Path(args.output)
+        if output.exists() and any(output.iterdir()) and not args.overwrite:
+            output = _unique_output_dir(output)
+    else:
+        name = f"{inputs[0].stem}-recovered" if len(inputs) == 1 else "recovered-project"
+        output = _unique_output_dir(config.output_dir / "decompiled" / name)
+
+    session = DecompileSession(options)
+    result = session.decompile(
+        inputs,
+        output,
+        progress=None if args.quiet or args.json else progress,
+        log_callback=None if args.quiet or args.json else lambda message, _tag: _print(f"  {message}"),
+    )
+    if args.json:
+        _print_json(
+            {
+                "ok": result.ok,
+                "output": str(result.output_dir),
+                "project_kind": result.project_kind,
+                "recompile_ready": result.recompile_ready,
+                "manifest": str(result.manifest_path or ""),
+                "analyses": [analysis.to_dict() for analysis in result.analyses],
+                "files": [item.to_dict() for item in result.files],
+                "warnings": result.warnings,
+                "errors": result.errors,
+            }
+        )
+    else:
+        _print("")
+        _print(f"Recovered project: {result.output_dir}")
+        _print(f"Project kind: {result.project_kind or 'unknown'}")
+        _print(f"Recompilable as-is: {'yes' if result.recompile_ready else 'no'}")
+        for item in result.files:
+            _print(f"  [{item.status:<12}] {item.path}")
+        for warning in result.warnings:
+            _print(f"warning: {warning}")
+        for error in result.errors:
+            _print(f"error: {error}")
+        if result.manifest_path:
+            _print(f"manifest: {result.manifest_path}")
+        _print("Nothing from the imported file was executed.")
+    return EXIT_OK if result.ok and result.files else EXIT_ERROR
+
+
+def cmd_recompile(args) -> int:
+    from .decompiler import plan_recompile, recompile
+
+    root = Path(args.path)
+    if not root.is_dir():
+        _print(f"error: not a directory: {root}")
+        return EXIT_ERROR
+    config = AppConfig()
+    output = Path(args.output) if args.output else _unique_output_dir(
+        config.output_dir / "recompiled" / root.name
+    )
+    plan = plan_recompile(root, output, build_exe=args.exe)
+    if (not args.quiet and not args.json) or args.plan:
+        for line in plan.summary_lines():
+            _print(line)
+    if args.plan:
+        _print("")
+        _print("Plan only: nothing was executed.")
+        return EXIT_OK if plan.ready else EXIT_ERROR
+
+    def progress(message: str, done: int, total: int) -> None:
+        if not args.quiet and not args.json:
+            _print(f"[{done + 1:>3}/{total}] {message}")
+
+    result = recompile(
+        root,
+        output,
+        build_exe=args.exe,
+        consent_granted=args.consent,
+        progress=None if args.quiet else progress,
+        config=config,
+    )
+    if args.json:
+        _print_json(
+            {
+                "ok": result.ok,
+                "output": str(result.output_dir),
+                "kind": result.plan.kind,
+                "artifacts": [str(path) for path in result.artifacts],
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "notes": result.notes,
+                "log": str(result.log_path or ""),
+                "duration_seconds": round(result.duration_seconds, 3),
+            }
+        )
+    else:
+        _print("")
+        for line in result.summary_lines():
+            _print(line)
+    return EXIT_OK if result.ok else EXIT_ERROR
+
+
+def cmd_formats(args) -> int:
+    from .decompiler import supported_formats
+
+    rows = supported_formats()
+    if args.json:
+        _print_json(rows)
+        return EXIT_OK
+    _print(f"{'FORMAT':<28} {'LABEL':<38} OPERATIONS")
+    for row in rows:
+        _print(f"{row['format']:<28} {row['label']:<38} {row['operations']}")
+    return EXIT_OK
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1881,6 +2133,9 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init,
         "history": cmd_history,
         "gui": cmd_gui,
+        "decompile": cmd_decompile,
+        "recompile": cmd_recompile,
+        "formats": cmd_formats,
         "workspace": cmd_workspace,
         "fuse": cmd_fuse,
     }
