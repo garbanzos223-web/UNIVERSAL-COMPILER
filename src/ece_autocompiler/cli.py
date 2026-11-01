@@ -16,6 +16,7 @@ Subcommands mirror the GUI workflow so the tool is usable head-less and in CI:
     decompile analyse files and reconstruct an editable project
     recompile rebuild a recovered project with a real toolchain
     formats   list the decompiler's supported formats and operations
+    bundle-exe embed several executables in one launcher that starts them together
     tools     list detected toolchains and what is missing
     doctor    check that this machine is ready to build
     init      create a new project from a template
@@ -379,6 +380,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_formats = sub.add_parser("formats", help="List supported formats and the operations available.")
     p_formats.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    p_bundle = sub.add_parser(
+        "bundle-exe",
+        help="Embed several .exe files in one launcher that starts them together.",
+    )
+    p_bundle.add_argument("output", help="Output launcher .exe.")
+    p_bundle.add_argument("--main", help="Executable to start after the companions (also embedded).")
+    p_bundle.add_argument(
+        "--with", dest="companions", action="append", default=[],
+        help="Additional .exe embedded and started concurrently (repeatable).",
+    )
+    p_bundle.add_argument("--console", action="store_true", help="Keep a console window in the launcher.")
+    p_bundle.add_argument("--onedir", action="store_true", help="Build a folder instead of a single .exe.")
+    p_bundle.add_argument("--plan", action="store_true", help="Show the plan and exit; build nothing.")
+    p_bundle.add_argument("--json", action="store_true", help="Emit a JSON result.")
+    p_bundle.add_argument("--quiet", action="store_true", help="Only print the final summary.")
 
     # -- fusion engine ---------------------------------------------------
     p_ws = sub.add_parser(
@@ -2109,6 +2126,60 @@ def cmd_formats(args) -> int:
     return EXIT_OK
 
 
+def cmd_bundle_exe(args) -> int:
+    from .build.companion import CompanionRequest, build_companion_exe, companion_plan
+
+    files = [Path(path) for path in args.companions]
+    main = Path(args.main) if args.main else None
+    if main is not None:
+        files.append(main)
+    if not files:
+        _print("error: select at least one .exe with --with or --main.")
+        return EXIT_ERROR
+    missing = [str(path) for path in files if not path.is_file()]
+    if missing:
+        _print("error: these files do not exist: " + ", ".join(missing))
+        return EXIT_ERROR
+    request = CompanionRequest(
+        files=files,
+        output=Path(args.output),
+        main=main,
+        onefile=not args.onedir,
+        console=args.console,
+    )
+    if args.plan:
+        for line in companion_plan(request):
+            _print(line)
+        _print("")
+        _print("Plan only: nothing was built.")
+        return EXIT_OK
+
+    def progress(message: str, _done: int, _total: int) -> None:
+        if not args.quiet and not args.json and message:
+            _print(f"  {message}")
+
+    result = build_companion_exe(request, progress=progress)
+    if args.json:
+        _print_json(
+            {
+                "ok": result.ok,
+                "output": str(result.output or ""),
+                "size": result.size,
+                "sha256": result.sha256,
+                "errors": result.errors,
+                "warnings": result.warnings,
+                "notes": result.notes,
+                "log": str(result.log_path or ""),
+                "duration_seconds": round(result.duration_seconds, 3),
+            }
+        )
+    else:
+        _print("")
+        for line in result.summary_lines():
+            _print(line)
+    return EXIT_OK if result.ok else EXIT_ERROR
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -2136,6 +2207,7 @@ def main(argv: list[str] | None = None) -> int:
         "decompile": cmd_decompile,
         "recompile": cmd_recompile,
         "formats": cmd_formats,
+        "bundle-exe": cmd_bundle_exe,
         "workspace": cmd_workspace,
         "fuse": cmd_fuse,
     }

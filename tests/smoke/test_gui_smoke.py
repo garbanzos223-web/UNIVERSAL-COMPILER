@@ -41,6 +41,7 @@ try:
 
     from ece_autocompiler.ui.main_window import (
         AppContext,
+        BundleDialog,
         CandidateDialog,
         ContainerDialog,
         DiffDialog,
@@ -491,6 +492,7 @@ class GuiSmokeTests(unittest.TestCase):
             PackageDialog(self.ctx, self.tmp, output_dir=self.tmp / "out"),
             OptimizeDialog(self.ctx, self.tmp),
             RepairDialog(self.ctx, _fake_repair_outcome()),
+            BundleDialog(self.ctx),
             FusionDialog(self.ctx),
         ]
         fusion = dialogs[-1]

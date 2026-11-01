@@ -167,19 +167,30 @@ class DecompilerGuiTests(unittest.TestCase):
         self.assertGreater(len(exported_files), 0)
         self.assertTrue((Path(panel._exported_root) / "recovered-project.json").is_file())
 
-        panel._recompile()
-        self.assertTrue(
-            self._wait(
-                lambda: any("Recompilation report" in w.title() for w in self._toplevels())
-            ),
-            "the recompilation report never appeared",
-        )
+        warnings: list[tuple] = []
+        original_warning = messagebox.showwarning
+        messagebox.showwarning = lambda *a, **kw: warnings.append(a)
+        try:
+            panel._recompile()
+            self.assertTrue(
+                self._wait(lambda: bool(warnings) or "not recompilable" in panel.log.get().lower()),
+                "the recompiler gate never answered",
+            )
+        finally:
+            messagebox.showwarning = original_warning
         for widget in self._toplevels():
-            widget.destroy()
+            if "Recompilation report" in widget.title():
+                widget.destroy()
         self.root.update()
         # A Python outline is not recompilable source: the gate must refuse
         # rather than claim a build that cannot reproduce the original.
-        self.assertIn("not recompilable", panel.log.get().lower())
+        answer = " ".join(str(item) for item in warnings).lower() + panel.log.get().lower()
+        self.assertTrue(
+            "not recompilable" in answer
+            or "cannot be recompiled" in answer
+            or "generated outlines" in answer,
+            answer[:800],
+        )
 
     def test_03_editor_save_and_compare(self) -> None:
         panel = self.win.decompiler

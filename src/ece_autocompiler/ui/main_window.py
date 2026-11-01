@@ -53,6 +53,7 @@ from ..version import APP_NAME, APP_VERSION, CONTAINER_FORMAT_VERSION
 from .state import BUSY_STATES, STATE_UI, UiState
 from .theme import (
     COLORS,
+    FONTS,
     apply_theme,
     configure_root_window,
     configure_text_widget,
@@ -531,6 +532,7 @@ class MainWindow(ttk.Frame):
         toolsm.add_command(label="Fusion workspace (multi-language)...", command=self._show_fusion)
         toolsm.add_separator()
         toolsm.add_command(label="Create distributable package...", command=self._show_package)
+        toolsm.add_command(label="Bundle executables into one .exe...", command=self._show_bundle)
         toolsm.add_command(label="Toolchains...", command=self._show_toolchains)
         toolsm.add_command(label="Build history...", accelerator="Ctrl+H", command=self._show_history)
         toolsm.add_separator()
@@ -1315,6 +1317,10 @@ class MainWindow(ttk.Frame):
             output_dir=self.ctx.config.output_dir,
             prefer_adapter=self._preferred_adapter or None,
         )
+
+    def _show_bundle(self) -> None:
+        """Embed several .exe files into one launcher (DECOMPILER-style tool)."""
+        BundleDialog(self.ctx)
 
     def _show_optimize(self) -> None:
         """Open the optimization comparison dialog for the current project."""
@@ -3145,6 +3151,230 @@ class FusionDialog(_Dialog):
             self.ctx.status.set("Fusion build failed.")
 
         self.ctx.runner.run(work, done, fail)
+
+
+class BundleDialog(_Dialog):
+    """Embed several .exe files in one launcher that starts them together."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        super().__init__(ctx, "Bundle executables into one .exe", width=880, height=620)
+        self._files: list[Path] = []
+        self._main: Path | None = None
+        self._running = False
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+
+        bar = ttk.Frame(body)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(bar, text="Add .exe...", command=self._add).pack(side="left")
+        ttk.Button(bar, text="Remove", command=self._remove).pack(side="left", padx=6)
+        ttk.Button(bar, text="Set as main", command=self._set_main).pack(side="left")
+        ttk.Button(bar, text="Clear main", command=self._clear_main).pack(side="left", padx=6)
+        self.main_var = tk.StringVar(value="Main program: (none — all start together)")
+        ttk.Label(bar, textvariable=self.main_var, style="Muted.TLabel").pack(side="left", padx=10)
+
+        list_frame = ttk.Frame(body)
+        list_frame.grid(row=1, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        self.listbox = tk.Listbox(
+            list_frame, background=COLORS["panel"], foreground=COLORS["fg"],
+            selectbackground=COLORS["selection"], selectforeground="#ffffff",
+            borderwidth=0, highlightthickness=0, font=FONTS["mono"], height=9,
+        )
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.listbox.configure(yscrollcommand=scroll.set)
+
+        out = ttk.Frame(body)
+        out.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        out.columnconfigure(1, weight=1)
+        ttk.Label(out, text="Output .exe", width=12, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        self.output_var = tk.StringVar(
+            value=str(ctx.config.output_dir / "combined.exe")
+        )
+        ttk.Entry(out, textvariable=self.output_var).grid(row=0, column=1, sticky="ew")
+        ttk.Button(out, text="Save as...", command=self._browse_output).grid(row=0, column=2, padx=(8, 0))
+
+        options = ttk.Frame(body)
+        options.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self.onefile_var = tk.BooleanVar(value=True)
+        self.console_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options, text="Single .exe (onefile)", variable=self.onefile_var).pack(side="left")
+        ttk.Checkbutton(options, text="Keep a console window", variable=self.console_var).pack(side="left", padx=14)
+        ttk.Label(
+            options,
+            text="All embedded programs start at the same time; the launcher stays alive while any of them runs.",
+            style="Muted.TLabel",
+        ).pack(side="left", padx=10)
+
+        actions = ttk.Frame(body)
+        actions.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        self.build_btn = ttk.Button(actions, text="Build combined .exe", style="Accent.TButton", command=self._build)
+        self.build_btn.pack(side="left")
+        self.status_var = tk.StringVar(value="Add at least two .exe files (or one main and one companion).")
+        ttk.Label(actions, textvariable=self.status_var, style="Muted.TLabel").pack(side="left", padx=10)
+        ttk.Button(actions, text="Show plan", command=self._plan).pack(side="right")
+
+        self.log = tk.Text(body, height=8, wrap="word")
+        configure_text_widget(self.log)
+        self.log.grid(row=5, column=0, sticky="nsew", pady=(10, 0))
+        body.rowconfigure(5, weight=1)
+        self.log.insert("1.0", "Nothing has been built. The combined .exe embeds the selected files.\n")
+
+    # ------------------------------------------------------------- file list
+    def _add(self) -> None:
+        paths = filedialog.askopenfilenames(
+            parent=self, title="Select executables to embed",
+            filetypes=[("Windows executables", "*.exe"), ("All files", "*.*")],
+        )
+        for value in paths:
+            path = Path(value)
+            if path not in self._files:
+                self._files.append(path)
+                self.listbox.insert("end", str(path))
+        if self._files and self._main is None and len(self._files) == 1:
+            self._main = self._files[0]
+        self._refresh_main()
+        self.status_var.set(f"{len(self._files)} executable(s) selected.")
+
+    def _remove(self) -> None:
+        selection = list(self.listbox.curselection())
+        for index in reversed(selection):
+            path = self._files.pop(index)
+            self.listbox.delete(index)
+            if self._main == path:
+                self._main = None
+        self._refresh_main()
+
+    def _selected(self) -> Path | None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return None
+        index = selection[0]
+        return self._files[index] if 0 <= index < len(self._files) else None
+
+    def _set_main(self) -> None:
+        path = self._selected()
+        if path is None:
+            self.status_var.set("Select an executable first.")
+            return
+        self._main = path
+        self._refresh_main()
+
+    def _clear_main(self) -> None:
+        self._main = None
+        self._refresh_main()
+
+    def _refresh_main(self) -> None:
+        if self._main is None:
+            self.main_var.set("Main program: (none — all start together)")
+            return
+        self.main_var.set(f"Main program: {self._main.name} (started after the companions)")
+
+    def _browse_output(self) -> None:
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Save the combined executable as",
+            defaultextension=".exe", filetypes=[("Windows executable", "*.exe")],
+        )
+        if path:
+            self.output_var.set(path)
+
+    # --------------------------------------------------------------- actions
+    def _request(self):
+        from ..build.companion import CompanionRequest
+
+        files = list(self._files)
+        if self._main is not None and self._main not in files:
+            files.append(self._main)
+        return CompanionRequest(
+            files=files,
+            output=Path(self.output_var.get().strip() or "combined.exe"),
+            main=self._main,
+            onefile=self.onefile_var.get(),
+            console=self.console_var.get(),
+        )
+
+    def _plan(self) -> None:
+        from ..build.companion import companion_plan
+
+        request = self._request()
+        self.log.delete("1.0", "end")
+        self.log.insert("1.0", "\n".join(companion_plan(request)) + "\n\nNothing was built.\n")
+
+    def _build(self) -> None:
+        from ..build.companion import build_companion_exe
+
+        if self._running:
+            return
+        request = self._request()
+        if len(request.files) < 2:
+            messagebox.showwarning(
+                APP_NAME,
+                "Select at least two .exe files: the launcher embeds one and starts "
+                "the others at the same time.\n\nUse Add .exe... to select them.",
+                parent=self,
+            )
+            return
+        if not str(request.output).lower().endswith(".exe"):
+            messagebox.showwarning(APP_NAME, "The output must end with .exe.", parent=self)
+            return
+        self._running = True
+        self.build_btn.configure(state="disabled")
+        self.status_var.set("Building the combined executable...")
+        self.log.delete("1.0", "end")
+        self.log.insert("1.0", "Running PyInstaller...\n")
+        self.log.configure(state="disabled")
+
+        def work():
+            return build_companion_exe(
+                request,
+                config=self.ctx.config,
+                progress=lambda message, _d, _t: self.ctx.runner.post(
+                    lambda m=message: self._append_log(m)
+                ),
+            )
+
+        def done(result) -> None:
+            self._running = False
+            self.build_btn.configure(state="normal")
+            self.log.configure(state="normal")
+            self.log.insert("end", "\n" + "\n".join(result.summary_lines()) + "\n")
+            self.log.see("end")
+            self.log.configure(state="disabled")
+            self.status_var.set(
+                "Combined executable created." if result.ok
+                else "The combined executable was not created; see the log."
+            )
+            if result.ok and result.output:
+                if messagebox.askyesno(
+                    APP_NAME,
+                    f"Combined executable created:\n{result.output}\n\nOpen the folder?",
+                    parent=self,
+                ):
+                    _open_folder(result.output.parent)
+
+        def fail(exc: BaseException) -> None:
+            self._running = False
+            self.build_btn.configure(state="normal")
+            self.log.configure(state="normal")
+            self.log.insert("end", f"\nFailed: {exc}\n")
+            self.log.configure(state="disabled")
+            self.status_var.set("The combined executable was not created.")
+
+        self.ctx.runner.run(work, done, fail)
+
+    def _append_log(self, message: str) -> None:
+        if not message:
+            return
+        self.log.configure(state="normal")
+        self.log.insert("end", message + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
 
 
 class AboutDialog(_Dialog):
