@@ -45,6 +45,7 @@ try:
         ContainerDialog,
         DiffDialog,
         ErrorDialog,
+        FusionDialog,
         GettingStartedDialog,
         HistoryDialog,
         MainWindow,
@@ -490,7 +491,13 @@ class GuiSmokeTests(unittest.TestCase):
             PackageDialog(self.ctx, self.tmp, output_dir=self.tmp / "out"),
             OptimizeDialog(self.ctx, self.tmp),
             RepairDialog(self.ctx, _fake_repair_outcome()),
+            FusionDialog(self.ctx),
         ]
+        fusion = dialogs[-1]
+        self.assertEqual(str(fusion.build_btn.cget("state")), "normal")
+        self.assertEqual(str(fusion.cancel_btn.cget("state")), "disabled")
+        self.assertEqual(fusion.jobs_var.get(), "auto")
+        self.assertEqual(list(fusion.entry_combo.cget("values")), [])
         try:
             for dialog in dialogs:
                 dialog.update_idletasks()

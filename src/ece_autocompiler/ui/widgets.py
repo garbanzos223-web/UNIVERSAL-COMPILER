@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from tkinter import ttk
 from typing import Any
 
+from ..logging_config import get_logger
 from .theme import COLORS, FONTS, configure_text_widget
+
+log = get_logger("ui.runner")
 
 
 class TaskRunner:
@@ -38,9 +41,12 @@ class TaskRunner:
             try:
                 callback()
             except Exception:  # pragma: no cover - UI safety net
-                pass
+                log.exception("UI callback failed")
             drained += 1
-        self._root.after(self._interval, self._poll)
+        try:
+            self._root.after(self._interval, self._poll)
+        except tk.TclError:  # pragma: no cover - window destroyed
+            pass
 
     def post(self, callback: Callable[[], None]) -> None:
         """Schedule *callback* to run on the Tk main thread."""
@@ -52,6 +58,7 @@ class TaskRunner:
             try:
                 result = work() if work else None
             except BaseException as exc:  # noqa: BLE001 - forwarded to caller
+                log.exception("background task failed")
                 if on_error:
                     self.post(lambda e=exc: on_error(e))
                 return

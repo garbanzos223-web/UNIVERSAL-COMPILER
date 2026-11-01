@@ -137,8 +137,15 @@ class MainWindow(ttk.Frame):
         # Thin accent strip separating the header from the content.
         ttk.Frame(self, style="AccentStrip.TFrame", height=3).pack(fill="x")
 
+        # Two integrated workspaces in one window: the original compiler and
+        # the new decompiler/recompiler. Same theme, same navigation bar.
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True)
+        self.compile_page = ttk.Frame(self.tabs)
+        self.tabs.add(self.compile_page, text="COMPILER")
+
         # --- Project card -----------------------------------------------------
-        proj = _make_card(self, "PROJECT")
+        proj = _make_card(self.compile_page, "PROJECT")
         proj.columnconfigure(1, weight=1)
         self.project_row = make_path_row(proj, "Project folder", browse_command=self._browse_project)
         self.project_row.frame.grid(row=0, column=0, columnspan=3, sticky="ew")
@@ -158,7 +165,7 @@ class MainWindow(ttk.Frame):
         )
 
         # --- Output card ------------------------------------------------------
-        out = _make_card(self, "OUTPUT")
+        out = _make_card(self.compile_page, "OUTPUT")
         out.columnconfigure(1, weight=1)
 
         mode_row = ttk.Frame(out)
@@ -341,9 +348,16 @@ class MainWindow(ttk.Frame):
         add_tooltip(self.next_btn, "Get one concrete next action for the current state of the project.")
 
         # --- Log card ---------------------------------------------------------
-        log_card = _make_card(self, "LOG", expand=True)
+        log_card = _make_card(self.compile_page, "LOG", expand=True)
         self.log = LogConsole(log_card, height=14)
         self.log.pack(fill="both", expand=True)
+
+        # --- Decompiler tab ---------------------------------------------------
+        from .decompiler_panel import DecompilerPanel
+
+        self.decompiler = DecompilerPanel(self.tabs, ctx)
+        self.tabs.add(self.decompiler, text="DECOMPILER")
+        self.tabs.bind("<<NotebookTabChanged>>", lambda _e: self._on_tab_changed())
 
         ctx.status.pack(fill="x", side="bottom")
 
@@ -356,6 +370,7 @@ class MainWindow(ttk.Frame):
         # centred on a real geometry.
         if should_show(self._settings):
             master.after(300, self._show_getting_started)
+        master.after(500, self.decompiler.attach_drag_and_drop)
 
     # --------------------------------------------------------------- settings
     def _load_settings(self) -> dict:
@@ -403,6 +418,8 @@ class MainWindow(ttk.Frame):
         master.bind_all("<Control-p>", self._key_plan)
         master.bind_all("<Control-d>", self._key_doctor)
         master.bind_all("<Control-h>", self._key_history)
+        master.bind_all("<Control-2>", self._key_decompiler)
+        master.bind_all("<Control-1>", self._key_compiler)
 
     def _key_rescan(self, _event=None):
         if not self._building:
@@ -447,6 +464,26 @@ class MainWindow(ttk.Frame):
         HistoryDialog(self.ctx)
         return "break"
 
+    def _key_decompiler(self, _event=None):
+        self._show_decompiler()
+        return "break"
+
+    def _key_compiler(self, _event=None):
+        self.tabs.select(self.compile_page)
+        self.ctx.status.set("Compiler workspace.")
+        return "break"
+
+    def _on_tab_changed(self) -> None:
+        try:
+            current = self.tabs.index(self.tabs.select())
+        except tk.TclError:  # pragma: no cover - no tab
+            return
+        if current == 1:
+            self.decompiler.attach_drag_and_drop()
+            self.ctx.status.set("Decompiler workspace: import a file to analyse it. Nothing is executed.")
+        else:
+            self.ctx.status.set("Compiler workspace.")
+
     # ------------------------------------------------------------ window close
     def _on_close(self) -> None:
         """Warn before closing while a build is running (item: safe exit)."""
@@ -469,6 +506,8 @@ class MainWindow(ttk.Frame):
         filem.add_command(label="New project from template...", command=self._show_template)
         filem.add_command(label="Rescan detection", accelerator="F5", command=self._detect)
         filem.add_separator()
+        filem.add_command(label="Decompile files...", accelerator="Ctrl+2", command=self._show_decompiler)
+        filem.add_separator()
         filem.add_command(label="Open output folder", command=self._open_output)
         filem.add_command(label="Open work folder", command=lambda: _open_folder(self.ctx.config.work_dir))
         filem.add_separator()
@@ -485,6 +524,8 @@ class MainWindow(ttk.Frame):
         menubar.add_cascade(label="Build", menu=buildm)
 
         toolsm = tk.Menu(menubar, tearoff=0)
+        toolsm.add_command(label="Decompiler / recompiler workspace...", accelerator="Ctrl+2", command=self._show_decompiler)
+        toolsm.add_separator()
         toolsm.add_command(label="Inspect / Extract / Compare .ece...", command=self._show_container)
         toolsm.add_separator()
         toolsm.add_command(label="Fusion workspace (multi-language)...", command=self._show_fusion)
@@ -1239,6 +1280,12 @@ class MainWindow(ttk.Frame):
     def _show_fusion(self) -> None:
         FusionDialog(self.ctx)
 
+    def _show_decompiler(self) -> None:
+        """Switch to the integrated decompiler workspace (same window)."""
+        self.tabs.select(self.decompiler)
+        self.decompiler.attach_drag_and_drop()
+        self.ctx.status.set("Decompiler workspace: import a file to analyse it. Nothing is executed.")
+
     def _show_about(self) -> None:
         AboutDialog(self.ctx)
 
@@ -1369,6 +1416,8 @@ class ToolchainDialog(_Dialog):
             return tools, {row.tool_id: row for row in toolchain_versions()}
 
         def done(payload) -> None:
+            if not self.winfo_exists():
+                return
             tools, versions = payload
             self._tools = dict(tools)
             self._versions = dict(versions)
@@ -1400,7 +1449,7 @@ class ToolchainDialog(_Dialog):
                 )
             self.ctx.status.set("Toolchain discovery finished.")
 
-        self.ctx.runner.run(work, done, lambda e: self.summary_var.set(f"Discovery failed: {e}"))
+        self.ctx.runner.run(work, done, lambda e: self.summary_var.set(f"Discovery failed: {e}") if self.winfo_exists() else None)
 
     def _selected_tool_id(self) -> str:
         selection = self.tree.selection()
@@ -2726,6 +2775,8 @@ class FusionDialog(_Dialog):
     def __init__(self, ctx) -> None:
         super().__init__(ctx, "Fusion workspace (multi-language)", width=880, height=600)
         self.workspace = None
+        self._cancel = threading.Event()
+        self._running = False
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
@@ -2763,14 +2814,33 @@ class FusionDialog(_Dialog):
 
         build_row = ttk.Frame(body)
         build_row.grid(row=4, column=0, sticky="ew")
-        ttk.Label(build_row, text="Package format:").pack(side="left")
+        ttk.Label(build_row, text="Entry point:").pack(side="left")
+        self.entry_var = tk.StringVar(value="")
+        self.entry_combo = ttk.Combobox(
+            build_row, textvariable=self.entry_var, values=[], width=16,
+        )
+        self.entry_combo.pack(side="left", padx=6)
+        ttk.Button(build_row, text="Set", command=self._apply_entry).pack(side="left")
+        ttk.Label(build_row, text="Package format:").pack(side="left", padx=(12, 0))
         self.format_var = tk.StringVar(value="ece")
         ttk.Combobox(
             build_row, textvariable=self.format_var, values=list(self.PACKAGE_FORMATS),
             width=8, state="readonly",
         ).pack(side="left", padx=6)
+        ttk.Label(build_row, text="Parallel modules:").pack(side="left", padx=(12, 0))
+        self.jobs_var = tk.StringVar(value="auto")
+        ttk.Spinbox(
+            build_row, from_=0, to=16, textvariable=self.jobs_var, width=5,
+        ).pack(side="left", padx=6)
         ttk.Button(build_row, text="Plan (no build)", command=self._plan).pack(side="left")
-        ttk.Button(build_row, text="Build fused application", command=self._build).pack(side="left", padx=8)
+        self.build_btn = ttk.Button(
+            build_row, text="Build fused application", command=self._build
+        )
+        self.build_btn.pack(side="left", padx=8)
+        self.cancel_btn = ttk.Button(
+            build_row, text="Cancel build", command=self._cancel_build, state="disabled"
+        )
+        self.cancel_btn.pack(side="left")
 
         self.detail = _readonly_text(self, "", height=8)
         self.detail.pack(fill="both", expand=True, padx=12, pady=(4, 12))
@@ -2827,6 +2897,7 @@ class FusionDialog(_Dialog):
         if fill:
             self.path_var.set(str(self.workspace.root))
             self.format_var.set(self.workspace.config.package_format or "ece")
+            self.entry_var.set(self.workspace.config.entry_point or "")
         total_files = 0
         for inp in self.workspace.inputs:
             total_files += inp.file_count
@@ -2901,6 +2972,37 @@ class FusionDialog(_Dialog):
                 return
         self._refresh(fill=True)
 
+    def _apply_entry(self) -> None:
+        """Save the chosen entry point after the plan listed the real modules."""
+        if self.workspace is None:
+            messagebox.showwarning(APP_NAME, "Load a workspace first.")
+            return
+        value = self.entry_var.get().strip()
+        known = [str(v) for v in self.entry_combo.cget("values")]
+        if not value:
+            messagebox.showwarning(
+                APP_NAME, "Choose an entry point, or run Plan to list the modules first."
+            )
+            return
+        if not known:
+            messagebox.showwarning(
+                APP_NAME,
+                "The module list is not loaded yet. Run Plan (no build) first, then "
+                "choose one of the modules it found.",
+            )
+            return
+        if value not in known:
+            messagebox.showwarning(
+                APP_NAME,
+                f"{value!r} is not a module in this workspace. Choose one of: "
+                + ", ".join(known),
+            )
+            return
+        self.workspace.config.entry_point = value
+        self.workspace.save()
+        self.ctx.status.set(f"Entry point set to {value}.")
+        self.summary_var.set(f"Entry point saved: {value}")
+
     def _plan(self) -> None:
         if self.workspace is None:
             messagebox.showwarning(APP_NAME, "Load a workspace first.")
@@ -2923,9 +3025,11 @@ class FusionDialog(_Dialog):
             lines.append(f"entry point: {graph.entry_point or '(not decided)'}")
             lines.extend(f"conflict: {c}" for c in graph.conflicts)
             lines.extend(f"cycle: {' -> '.join(c)}" for c in graph.cycles)
-            return lines
+            return lines, [m.module_id for m in graph.modules]
 
-        def done(lines):
+        def done(payload):
+            lines, module_ids = payload
+            self.entry_combo.configure(values=module_ids)
             self._set_text(self.detail, "\n".join(lines))
             self.summary_var.set("Plan finished; the build ran nothing.")
             self.ctx.status.set("Fusion plan ready.")
@@ -2935,26 +3039,77 @@ class FusionDialog(_Dialog):
 
         self.ctx.runner.run(work, done, fail)
 
+    def _cancel_build(self) -> None:
+        if not self._running:
+            return
+        self._cancel.set()
+        self.cancel_btn.configure(state="disabled")
+        self.summary_var.set("Cancelling: waiting for the running step to stop...")
+        self.ctx.status.set("Fusion build cancellation requested.")
+
     def _build(self) -> None:
         if self.workspace is None:
             messagebox.showwarning(APP_NAME, "Load a workspace first.")
             return
+        if self._running:
+            return
         fmt = self.format_var.get()
+        try:
+            jobs = max(0, int(self.jobs_var.get().strip() or "0"))
+        except ValueError:
+            jobs = 0
+        self._cancel.clear()
+        self._running = True
+        self.build_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
         self.summary_var.set("Building (this runs each module's real toolchain)...")
         self.ctx.status.set("Fusion build running...")
+
+        def progress(stage, detail):
+            self.ctx.runner.post(
+                lambda s=stage, d=detail: self.summary_var.set(f"{s}: {d}")
+            )
 
         def work():
             from ..fusion.orchestrator import FusionOrchestrator
 
-            orchestrator = FusionOrchestrator(self.workspace)
-            return orchestrator.run(package_format=fmt)
+            orchestrator = FusionOrchestrator(
+                self.workspace, progress=progress, cancel=self._cancel
+            )
+            return orchestrator.run(
+                package_format=fmt,
+                max_parallel=jobs if jobs > 0 else None,
+            )
+
+        def finish() -> None:
+            self._running = False
+            self.build_btn.configure(state="normal")
+            self.cancel_btn.configure(state="disabled")
 
         def done(result):
+            finish()
+            self.entry_combo.configure(
+                values=[module.module_id for module in result.graph.modules]
+            )
+            self.entry_var.set(result.graph.entry_point or "")
             lines = []
-            if result.ok:
+            if result.report.get("cancelled"):
+                lines.append("BUILD CANCELLED (no package was produced for this run)")
+            elif result.ok:
                 lines.append("BUILD OK")
             else:
                 lines.append("BUILD FAILED (details below; nothing was faked)")
+            try:
+                from ..fusion.history import record as record_fusion_history
+
+                record_fusion_history(result)
+            except Exception as exc:
+                lines.append(f"warning: build history not recorded: {exc}")
+            for record in result.report.get("artifacts", []):
+                lines.append(
+                    f"  artifact {record['module']}: {record['path']} "
+                    f"({record['size']} bytes, sha256 {record['sha256'][:12]}...)"
+                )
             for task in result.report.get("tasks", []):
                 status = "cached" if task.get("cached") else task["status"]
                 line = f"  {task['module_id']}: {status}"
@@ -2963,18 +3118,31 @@ class FusionDialog(_Dialog):
                 lines.append(line)
             if result.package_path:
                 lines.append(f"package: {result.package_path}")
+            package = result.report.get("package_artifact") or {}
+            if package.get("sha256"):
+                lines.append(
+                    f"package sha256: {package['sha256']} ({package.get('size', 0)} bytes)"
+                )
             for finding in result.validation:
                 lines.append(f"validation: {finding}")
             for message in result.messages:
                 lines.append(message)
+            if result.report.get("report_path"):
+                lines.append(f"full report: {result.report['report_path']}")
             self._set_text(self.detail, "\n".join(lines))
-            self.summary_var.set(
-                "Build finished." if result.ok else "Build failed; see the details below."
-            )
-            self.ctx.status.set("Fusion build finished.")
+            if result.report.get("cancelled"):
+                summary = "Build cancelled; no package was produced."
+            elif result.ok:
+                summary = "Build finished."
+            else:
+                summary = "Build failed; see the details below."
+            self.summary_var.set(summary)
+            self.ctx.status.set(summary)
 
         def fail(error):
+            finish()
             self.summary_var.set(f"Build failed: {error}")
+            self.ctx.status.set("Fusion build failed.")
 
         self.ctx.runner.run(work, done, fail)
 
