@@ -37,7 +37,7 @@ jobs:
           python -m pip install -e . --disable-pip-version-check
           python -m pip install -e ".[decompile]" --disable-pip-version-check
 
-      - name: Lint (stdlib-only: compileall + AST checks)
+      - name: Lint (stdlib-only compileall + AST checks)
         run: powershell -NoProfile -File scripts\lint.ps1
 
       - name: Decompiler catalog smoke
